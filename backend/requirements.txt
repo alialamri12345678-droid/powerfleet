@@ -1,0 +1,37 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# Modbus
+pymodbus==3.8.6
+
+# Database
+sqlalchemy[asyncio]==2.0.37
+asyncpg==0.30.0        # PostgreSQL async driver
+aiosqlite==0.20.0      # SQLite async driver (dev/fallback)
+alembic==1.14.1
+
+# Scheduler
+apscheduler==3.10.4
+
+# Auth
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# Config
+pydantic-settings==2.7.1
+email-validator==2.2.0
+pyyaml==6.0.2
+
+# WebSockets (included in uvicorn[standard])
+websockets==14.2
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+httpx==0.28.1
+
+# Utilities
+python-dateutil==2.9.0
+pytz==2024.2

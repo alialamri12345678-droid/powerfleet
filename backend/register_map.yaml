@@ -1,0 +1,312 @@
+# DSE 8620 MKII / 8610 MKII — Modbus Register Map
+# ===================================================
+# All addresses below are PLACEHOLDER values. Update them with the
+# official register numbers from DSE's Modbus documentation once
+# received from DSE support.
+#
+# Conventions:
+#   address   — Modbus register address (decimal or 0x hex)
+#   type      — uint16 | int16 | uint32 | int32 | float32 | bool (coil)
+#   access    — read | write | readwrite
+#   scale     — multiply raw value by this factor to get engineering units
+#   unit      — engineering unit label
+#   bit_mask  — for registers that pack multiple flags into one word
+#   description — human-readable purpose
+
+version: "1.0-placeholder"
+
+registers:
+  # ── Status Registers ────────────────────────────────────────────────
+  engine_status:
+    address: 0x0100            # PLACEHOLDER — update from DSE docs
+    type: uint16
+    access: read
+    description: >
+      Engine status word.
+      0 = Stopped, 1 = Pre-heat, 2 = Cranking, 3 = Running,
+      4 = Cooling down, 5 = Stopped with fault
+    values:
+      0: stopped
+      1: preheat
+      2: cranking
+      3: running
+      4: cooldown
+      5: fault
+
+  generator_status:
+    address: 0x0101            # PLACEHOLDER
+    type: uint16
+    access: read
+    description: >
+      Generator / alternator status.
+      0 = Off, 1 = Warming up, 2 = On load, 3 = Shutting down
+
+  generator_breaker:
+    address: 0x0102            # PLACEHOLDER
+    type: uint16
+    access: read
+    description: "Generator breaker status: 0=open, 1=closed"
+
+  sync_status:
+    address: 0x0103            # PLACEHOLDER
+    type: uint16
+    access: read
+    description: "Synchronization status: 0=not synced, 1=synced"
+
+  # ── Electrical Measurements ─────────────────────────────────────────
+  load_kw:
+    address: 0x0110            # PLACEHOLDER
+    type: int16
+    scale: 0.1
+    unit: kW
+    access: read
+    description: "Active power output in kW (multiply raw by scale)"
+
+  load_kw_percent:
+    address: 0x0112            # PLACEHOLDER
+    type: uint16
+    unit: "%"
+    access: read
+    description: "Active power as percentage of rated kW"
+
+  load_kvar:
+    address: 0x0114            # PLACEHOLDER
+    type: int16
+    scale: 0.1
+    unit: kVAr
+    access: read
+    description: "Reactive power output in kVAr"
+
+  load_kvar_percent:
+    address: 0x0116            # PLACEHOLDER
+    type: uint16
+    unit: "%"
+    access: read
+    description: "Reactive power as percentage of rated kVAr"
+
+  load_kva:
+    address: 0x0118            # PLACEHOLDER
+    type: int16
+    scale: 0.1
+    unit: kVA
+    access: read
+    description: "Apparent power output in kVA"
+
+  voltage_l1_n:
+    address: 0x0120            # PLACEHOLDER
+    type: uint16
+    scale: 0.1
+    unit: V
+    access: read
+    description: "Phase L1-N voltage"
+
+  voltage_l2_n:
+    address: 0x0121            # PLACEHOLDER
+    type: uint16
+    scale: 0.1
+    unit: V
+    access: read
+
+  voltage_l3_n:
+    address: 0x0122            # PLACEHOLDER
+    type: uint16
+    scale: 0.1
+    unit: V
+    access: read
+
+  frequency:
+    address: 0x0130            # PLACEHOLDER
+    type: uint16
+    scale: 0.1
+    unit: Hz
+    access: read
+    description: "Generator frequency"
+
+  # ── Engine Parameters ───────────────────────────────────────────────
+  coolant_temperature:
+    address: 0x0140            # PLACEHOLDER
+    type: int16
+    unit: "°C"
+    access: read
+    description: "Engine coolant temperature"
+
+  oil_pressure:
+    address: 0x0142            # PLACEHOLDER
+    type: uint16
+    scale: 0.1
+    unit: bar
+    access: read
+    description: "Engine oil pressure"
+
+  battery_voltage:
+    address: 0x0144            # PLACEHOLDER
+    type: uint16
+    scale: 0.1
+    unit: V
+    access: read
+    description: "Starter battery voltage"
+
+  engine_speed:
+    address: 0x0146            # PLACEHOLDER
+    type: uint16
+    unit: RPM
+    access: read
+    description: "Engine speed"
+
+  # ── Accumulated Totals ──────────────────────────────────────────────
+  run_hours:
+    address: 0x0150            # PLACEHOLDER
+    type: uint32               # Two consecutive 16-bit registers (high word first)
+    scale: 0.1
+    unit: hours
+    access: read
+    description: "Total engine run hours"
+
+  total_kwh:
+    address: 0x0152            # PLACEHOLDER
+    type: uint32
+    unit: kWh
+    access: read
+    description: "Total energy produced"
+
+  number_of_starts:
+    address: 0x0154            # PLACEHOLDER
+    type: uint32
+    access: read
+    description: "Total engine start count"
+
+  # ── Alarm / Fault Flags ─────────────────────────────────────────────
+  alarm_word_1:
+    address: 0x0200            # PLACEHOLDER
+    type: uint16
+    access: read
+    description: "Alarm flags word 1 — bitfield"
+    bits:
+      0: emergency_stop
+      1: low_oil_pressure
+      2: high_coolant_temp
+      3: low_coolant_temp
+      4: underspeed
+      5: overspeed
+      6: generator_over_frequency
+      7: generator_under_frequency
+
+  alarm_word_2:
+    address: 0x0201            # PLACEHOLDER
+    type: uint16
+    access: read
+    description: "Alarm flags word 2 — bitfield"
+    bits:
+      0: generator_over_voltage
+      1: generator_under_voltage
+      2: battery_over_voltage
+      3: battery_under_voltage
+      4: overload_alarm
+      5: generator_short_circuit
+      6: mains_failure
+      7: generator_earth_fault
+
+  alarm_word_3:
+    address: 0x0202            # PLACEHOLDER
+    type: uint16
+    access: read
+    description: "Alarm flags word 3 — bitfield"
+    bits:
+      0: fuel_level_low
+      1: fuel_level_high
+      2: charge_alternator_fail
+      3: fail_to_start
+      4: fail_to_stop
+      5: loss_of_speed_signal
+      6: low_fuel_pressure
+      7: high_fuel_pressure
+
+  # ── Control Coils (Writable) ────────────────────────────────────────
+  remote_start:
+    address: 0x0300            # PLACEHOLDER — update from DSE docs
+    type: bool                 # Modbus coil
+    access: write
+    description: >
+      Remote start command. Write TRUE (0xFF00) to assert the
+      remote start input on the panel. The panel handles all
+      synchronisation and load-sharing internally.
+
+  remote_stop:
+    address: 0x0301            # PLACEHOLDER
+    type: bool
+    access: write
+    description: >
+      Remote stop command. Write TRUE (0xFF00) to assert the
+      remote stop input. The panel manages its own cooling-down
+      sequence and breaker opening.
+
+  # ── Setpoint Registers (Writable, Optional) ─────────────────────────
+  fixed_power_setpoint_kw:
+    address: 0x0310            # PLACEHOLDER — may not be writable on all firmware
+    type: uint16
+    unit: "%"
+    access: readwrite
+    description: >
+      Fixed-power / base-load target as % of rated kW.
+      Only relevant when the panel is configured for fixed-power mode
+      (not load-sharing mode). Whether this register is writable depends
+      on DSE firmware — verify before using.
+
+  fixed_power_setpoint_kvar:
+    address: 0x0312            # PLACEHOLDER
+    type: uint16
+    unit: "%"
+    access: readwrite
+    description: "Fixed reactive power target as % of rated kVAr"
+
+# ── Polling Groups ─────────────────────────────────────────────────────
+# Define logical groups of registers to read together for efficiency.
+# The gateway reads each group in a single Modbus transaction.
+poll_groups:
+  status:
+    description: "Core status — polled every cycle"
+    registers:
+      - engine_status
+      - generator_status
+      - generator_breaker
+      - sync_status
+      - load_kw
+      - load_kw_percent
+      - load_kvar
+      - load_kvar_percent
+    interval_ms: 1000
+
+  electrical:
+    description: "Detailed electrical — polled less frequently"
+    registers:
+      - load_kva
+      - voltage_l1_n
+      - voltage_l2_n
+      - voltage_l3_n
+      - frequency
+    interval_ms: 2000
+
+  engine:
+    description: "Engine health parameters"
+    registers:
+      - coolant_temperature
+      - oil_pressure
+      - battery_voltage
+      - engine_speed
+    interval_ms: 5000
+
+  totals:
+    description: "Accumulated counters — slow poll"
+    registers:
+      - run_hours
+      - total_kwh
+      - number_of_starts
+    interval_ms: 30000
+
+  alarms:
+    description: "Alarm flags — polled every cycle"
+    registers:
+      - alarm_word_1
+      - alarm_word_2
+      - alarm_word_3
+    interval_ms: 1000

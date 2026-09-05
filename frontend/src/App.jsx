@@ -1,0 +1,141 @@
+import React, { useEffect, useState } from 'react';
+import { AuthProvider, useAuth } from './auth/AuthContext';
+import { LoginPage } from './auth/LoginPage';
+import { Navbar } from './components/Navbar';
+import { DashboardPage } from './pages/DashboardPage';
+import { SchedulePage } from './pages/SchedulePage';
+import { SettingsPage } from './pages/SettingsPage';
+import { ReportsPage } from './pages/ReportsPage';
+import { TechDiagPage } from './pages/TechDiagPage';
+import { TechOverridePage } from './pages/TechOverridePage';
+import { TechEventLogPage } from './pages/TechEventLogPage';
+import { AddSiteModal } from './components/AddSiteModal';
+import { AddGeneratorModal } from './components/AddGeneratorModal';
+import { useWebSocketTelemetry } from './api/ws';
+import { apiRequest } from './api/client';
+
+function AppContent() {
+  const { user, loading } = useAuth();
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [sites, setSites] = useState([]);
+  const [currentSite, setCurrentSite] = useState(null);
+  const [isAddSiteOpen, setIsAddSiteOpen] = useState(false);
+  const [isAddGenOpen, setIsAddGenOpen] = useState(false);
+  const [siteRefreshKey, setSiteRefreshKey] = useState(0);
+  const { panelStates, gatewayStatus } = useWebSocketTelemetry();
+
+  // Load sites whenever user is logged in
+  useEffect(() => {
+    if (user) {
+      loadSites();
+    }
+  }, [user, siteRefreshKey]);
+
+  async function loadSites() {
+    try {
+      const [sitesList, current] = await Promise.all([
+        apiRequest('/sites'),
+        apiRequest('/sites/current'),
+      ]);
+      setSites(sitesList);
+      setCurrentSite(current);
+    } catch (err) {
+      console.error('Failed to load sites:', err);
+    }
+  }
+
+  const handleSelectSite = async (siteId) => {
+    if (!siteId || siteId === currentSite?.id) return;
+    try {
+      const switched = await apiRequest(`/sites/switch/${siteId}`, { method: 'POST' });
+      setCurrentSite(switched);
+      setSiteRefreshKey((k) => k + 1);
+    } catch (err) {
+      alert(`Failed to switch site: ${err.message}`);
+    }
+  };
+
+  const handleSiteCreated = (newSite) => {
+    setSites((prev) => [...prev, newSite]);
+    setCurrentSite(newSite);
+    setSiteRefreshKey((k) => k + 1);
+  };
+
+  const handleGeneratorCreated = () => {
+    setSiteRefreshKey((k) => k + 1);
+  };
+
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--text-secondary)',
+      }}>
+        Starting portal...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage onLoginSuccess={() => setActiveTab('dashboard')} />;
+  }
+
+  return (
+    <div className="app-container">
+      <Navbar
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        currentSite={currentSite}
+        sites={sites}
+        onSelectSite={handleSelectSite}
+        onOpenAddSite={() => setIsAddSiteOpen(true)}
+      />
+
+      <main className="main-content">
+        {activeTab === 'dashboard' && (
+          <DashboardPage
+            panelStates={panelStates}
+            gatewayStatus={gatewayStatus}
+            onNavigate={setActiveTab}
+            currentSite={currentSite}
+            onOpenAddGenerator={() => setIsAddGenOpen(true)}
+            refreshKey={siteRefreshKey}
+          />
+        )}
+        {activeTab === 'schedule' && <SchedulePage />}
+        {activeTab === 'settings' && <SettingsPage />}
+        {activeTab === 'reports' && <ReportsPage />}
+
+        {/* Diagnostics, overrides, and audit log tabs */}
+        {activeTab === 'diagnostics' && <TechDiagPage />}
+        {activeTab === 'overrides' && <TechOverridePage />}
+        {activeTab === 'events' && <TechEventLogPage />}
+      </main>
+
+      {/* Modals */}
+      <AddSiteModal
+        isOpen={isAddSiteOpen}
+        onClose={() => setIsAddSiteOpen(false)}
+        onSiteCreated={handleSiteCreated}
+      />
+
+      <AddGeneratorModal
+        isOpen={isAddGenOpen}
+        onClose={() => setIsAddGenOpen(false)}
+        onGeneratorCreated={handleGeneratorCreated}
+        siteId={currentSite?.id}
+      />
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  );
+}

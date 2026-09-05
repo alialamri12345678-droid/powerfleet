@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # ── PostgreSQL Database (Production Stack) ─────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scada}
+      POSTGRES_USER: ${POSTGRES_USER:-scada_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_this_secure_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scada_user} -d ${POSTGRES_DB:-scada}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend Modbus Gateway & API ───────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scada_user}:${POSTGRES_PASSWORD:-change_this_secure_password}@db:5432/${POSTGRES_DB:-scada}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change_this_jwt_secret_in_production}
+      JWT_ALGORITHM: HS256
+      MODBUS_POLL_INTERVAL_MS: ${MODBUS_POLL_INTERVAL_MS:-1000}
+      MOCK_MODBUS_ENABLED: ${MOCK_MODBUS_ENABLED:-true}
+      COMMAND_MIN_RUN_SECONDS: 30
+      COMMAND_MIN_REST_SECONDS: 60
+    ports:
+      - "8000:8000"
+    # For RS485 serial dongles on Raspberry Pi / Industrial PC:
+    # devices:
+    #   - "/dev/ttyUSB0:/dev/ttyUSB0"
+
+  # ── Frontend Web Dashboard ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
