@@ -10,6 +10,9 @@ from app.models.schedule import Schedule
 from app.models.site import Site
 from app.models.threshold import Threshold
 from app.models.schedule_exception import ScheduleException
+from app.models.daily_priority import DailyPriority
+from app.models.release_threshold import ReleaseThreshold
+from app.models.start_threshold import StartThreshold
 
 __all__ = [
     "Base",
@@ -25,4 +28,8 @@ __all__ = [
     "Override",
     "User",
     "ScheduleException",
+    "DailyPriority",
+    "ReleaseThreshold",
+    "StartThreshold",
 ]
+

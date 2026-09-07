@@ -71,30 +71,46 @@ async def create_site(
     return SiteResponse.model_validate(new_site)
 
 
-@router.post("/switch/{site_id}", response_model=SiteResponse)
+from typing import Any
+from app.auth.service import create_access_token
+
+@router.post("/switch/{site_id}", response_model=dict[str, Any])
 async def switch_active_site(
     site_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> SiteResponse:
-    """Switch the current user's active site context."""
+) -> dict[str, Any]:
+    """Switch the current user's active site context and return a new token."""
     target_site = await session.get(Site, site_id)
     if target_site is None:
         raise HTTPException(status_code=404, detail="Target site not found")
 
     user.site_id = site_id
     await session.commit()
-    return SiteResponse.model_validate(target_site)
+    
+    # Generate new token with updated site_id
+    new_token = create_access_token({
+        "sub": str(user.id),
+        "email": user.email,
+        "role": user.role,
+        "site_id": str(user.site_id) if user.site_id else None,
+    })
+    
+    return {
+        "site": SiteResponse.model_validate(target_site).model_dump(mode="json"),
+        "access_token": new_token
+    }
 
 
-@router.patch("/current", response_model=SiteResponse)
-async def update_current_site(
+@router.patch("/{site_id}", response_model=SiteResponse)
+async def update_site(
+    site_id: str,
     body: SiteUpdate,
     user: Annotated[User, Depends(require_technician)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> SiteResponse:
-    """Update current site settings (technician only)."""
-    site = await session.get(Site, user.site_id)
+    """Update any site's settings (technician only)."""
+    site = await session.get(Site, site_id)
     if site is None:
         raise HTTPException(status_code=404, detail="Site not found")
 
@@ -105,3 +121,36 @@ async def update_current_site(
     await session.commit()
     await session.refresh(site)
     return SiteResponse.model_validate(site)
+
+
+@router.delete("/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_site(
+    site_id: str,
+    user: Annotated[User, Depends(require_technician)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Delete a site and all its generators (technician only)."""
+    site = await session.get(Site, site_id)
+    if site is None:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    # Prevent cascading deletion of the current user.
+    # Reassign the user to a different site if one exists, else prevent deletion.
+    stmt = select(Site).where(Site.id != site_id).limit(1)
+    result = await session.execute(stmt)
+    fallback_site = result.scalars().first()
+
+    if user.site_id == site_id:
+        if fallback_site:
+            user.site_id = fallback_site.id
+            await session.commit()
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete the only existing site. Create another site first."
+            )
+
+    # Delete the site (this cascades to panels, thresholds, events, overrides, etc. if ondelete="CASCADE" is set properly).
+    await session.delete(site)
+    await session.commit()
+    return None

@@ -19,10 +19,13 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sites, setSites] = useState([]);
   const [currentSite, setCurrentSite] = useState(null);
+  
+  // Modals state
   const [isAddSiteOpen, setIsAddSiteOpen] = useState(false);
-  const [isAddGenOpen, setIsAddGenOpen] = useState(false);
+  // editingGenerator can be null (closed), true (adding new), or an object (editing)
+  const [editingGenerator, setEditingGenerator] = useState(null);
   const [siteRefreshKey, setSiteRefreshKey] = useState(0);
-  const { panelStates, gatewayStatus } = useWebSocketTelemetry();
+  const { panelStates, gatewayStatus } = useWebSocketTelemetry(siteRefreshKey);
 
   // Load sites whenever user is logged in
   useEffect(() => {
@@ -47,8 +50,13 @@ function AppContent() {
   const handleSelectSite = async (siteId) => {
     if (!siteId || siteId === currentSite?.id) return;
     try {
-      const switched = await apiRequest(`/sites/switch/${siteId}`, { method: 'POST' });
-      setCurrentSite(switched);
+      const response = await apiRequest(`/sites/switch/${siteId}`, { method: 'POST' });
+      if (response.access_token) {
+        localStorage.setItem('access_token', response.access_token);
+        // Dispatch an event to notify hooks (like useWebSocketTelemetry) that the token changed
+        window.dispatchEvent(new Event('auth_token_changed'));
+      }
+      setCurrentSite(response.site || response);
       setSiteRefreshKey((k) => k + 1);
     } catch (err) {
       alert(`Failed to switch site: ${err.message}`);
@@ -101,7 +109,8 @@ function AppContent() {
             gatewayStatus={gatewayStatus}
             onNavigate={setActiveTab}
             currentSite={currentSite}
-            onOpenAddGenerator={() => setIsAddGenOpen(true)}
+            onOpenAddGenerator={() => setEditingGenerator(true)}
+            onEditPanel={(panel) => setEditingGenerator(panel)}
             refreshKey={siteRefreshKey}
           />
         )}
@@ -123,8 +132,9 @@ function AppContent() {
       />
 
       <AddGeneratorModal
-        isOpen={isAddGenOpen}
-        onClose={() => setIsAddGenOpen(false)}
+        isOpen={!!editingGenerator}
+        onClose={() => setEditingGenerator(null)}
+        initialData={typeof editingGenerator === 'object' ? editingGenerator : null}
         onGeneratorCreated={handleGeneratorCreated}
         siteId={currentSite?.id}
       />

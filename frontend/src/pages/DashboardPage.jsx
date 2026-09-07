@@ -11,6 +11,7 @@ export function DashboardPage({
   onNavigate,
   currentSite,
   onOpenAddGenerator,
+  onEditPanel,
   refreshKey,
 }) {
   const { user } = useAuth();
@@ -47,22 +48,30 @@ export function DashboardPage({
 
   const handleManualStart = async (panelId) => {
     try {
-      const res = await apiRequest(`/panels/${panelId}/start`, { method: 'POST' });
-      setActionMessage({ type: 'success', text: res.message });
+      const res = await apiRequest(`/panels/${panelId}/start`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'Manual start from dashboard' }),
+      });
+      setActionMessage({ type: 'success', text: res.message || 'Start command sent' });
       setTimeout(() => setActionMessage(null), 5000);
     } catch (err) {
-      setActionMessage({ type: 'error', text: err.message });
+      const msg = typeof err === 'string' ? err : (err?.message || JSON.stringify(err));
+      setActionMessage({ type: 'error', text: msg });
       setTimeout(() => setActionMessage(null), 6000);
     }
   };
 
   const handleManualStop = async (panelId) => {
     try {
-      const res = await apiRequest(`/panels/${panelId}/stop`, { method: 'POST' });
-      setActionMessage({ type: 'success', text: res.message });
+      const res = await apiRequest(`/panels/${panelId}/stop`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'Manual stop from dashboard' }),
+      });
+      setActionMessage({ type: 'success', text: res.message || 'Stop command sent' });
       setTimeout(() => setActionMessage(null), 5000);
     } catch (err) {
-      setActionMessage({ type: 'error', text: err.message });
+      const msg = typeof err === 'string' ? err : (err?.message || JSON.stringify(err));
+      setActionMessage({ type: 'error', text: msg });
       setTimeout(() => setActionMessage(null), 6000);
     }
   };
@@ -96,7 +105,7 @@ export function DashboardPage({
 
   panels.forEach((p) => {
     const live = panelStates[p.id];
-    if (live?.is_running) {
+    if (live?.is_running || live?.engine_status === 'running') {
       totalLiveKw += live.load_kw || 0;
       runningCount += 1;
     }
@@ -188,6 +197,7 @@ export function DashboardPage({
                 todayIndex={todayIndex}
                 onManualStart={handleManualStart}
                 onManualStop={handleManualStop}
+                onEditPanel={onEditPanel}
                 onDeletePanel={handleDeleteGenerator}
                 isTechnician={true}
               />

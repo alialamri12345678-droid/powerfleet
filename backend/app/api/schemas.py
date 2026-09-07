@@ -41,7 +41,7 @@ class PanelBase(BaseModel):
     unit_id: int = Field(1, ge=1, le=255)
     rated_kw: float = Field(..., ge=0)
     rated_kvar: float = Field(0.0, ge=0)
-    priority: int = Field(100, ge=1, le=1000)
+    priority: int | None = Field(None, ge=1, le=1000)
 
 
 class PanelCreate(PanelBase):
@@ -116,6 +116,26 @@ class BulkScheduleUpdate(BaseModel):
     schedules: list[ScheduleItem]
 
 
+class DailyPriorityItem(BaseModel):
+    panel_id: str
+    day_of_week: int = Field(..., ge=0, le=6)
+    priority: int = Field(..., ge=1)
+
+
+class DailyPriorityResponse(DailyPriorityItem):
+    id: str
+    site_id: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BulkDailyPriorityUpdate(BaseModel):
+    """Payload to update backup priorities for all days at once."""
+    priorities: list[DailyPriorityItem]
+
+
 class ScheduleExceptionBase(BaseModel):
     panel_id: str
     exception_date: date
@@ -180,6 +200,52 @@ class ThresholdResponse(ThresholdBase):
 
     class Config:
         from_attributes = True
+
+
+# ── Release Threshold Schemas (per-backup-unit) ────────────────────────
+class ReleaseThresholdItem(BaseModel):
+    panel_id: str
+    release_pct: float = Field(..., ge=0, le=100, description="Total facility load % below which this backup releases")
+    priority_order: int = Field(..., ge=1, description="Release order — higher priority number released first")
+
+
+class ReleaseThresholdResponse(ReleaseThresholdItem):
+    id: str
+    site_id: str
+    panel_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BulkReleaseThresholdUpdate(BaseModel):
+    """Bulk update release thresholds for all backup units in the site."""
+    thresholds: list[ReleaseThresholdItem]
+
+
+# ── Start Threshold Schemas (per-backup-unit, facility load based) ──────
+class StartThresholdItem(BaseModel):
+    panel_id: str
+    start_pct: float = Field(..., ge=0, le=100, description="Total facility load % above which this backup starts")
+    priority_order: int = Field(..., ge=1, description="Start order — lower priority number started first")
+
+
+class StartThresholdResponse(StartThresholdItem):
+    id: str
+    site_id: str
+    panel_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BulkStartThresholdUpdate(BaseModel):
+    """Bulk update start thresholds for all backup units in the site."""
+    thresholds: list[StartThresholdItem]
 
 
 # ── Power Setpoint Schemas ──────────────────────────────────────────────

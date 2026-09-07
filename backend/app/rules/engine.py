@@ -58,6 +58,9 @@ class RulesEngine:
         self._get_threshold_state = None
         self._get_panel = None
         self._get_schedule_exceptions = None
+        self._get_daily_priorities = None
+        self._get_release_thresholds = None
+        self._get_start_thresholds = None
 
     def set_data_accessors(
         self,
@@ -68,6 +71,8 @@ class RulesEngine:
         get_site=None,
         get_threshold_state=None,
         get_panel=None,
+        get_release_thresholds=None,
+        get_start_thresholds=None,
     ):
         """Set the async functions used to read schedules/thresholds from DB."""
         self._get_schedules = get_schedules
@@ -77,6 +82,8 @@ class RulesEngine:
         self._get_site = get_site
         self._get_threshold_state = get_threshold_state
         self._get_panel = get_panel
+        self._get_release_thresholds = get_release_thresholds
+        self._get_start_thresholds = get_start_thresholds
 
     async def start(self) -> None:
         """Start the scheduler and register the threshold check listener."""
@@ -144,11 +151,57 @@ class RulesEngine:
             except Exception:
                 pass
         self._schedule_jobs.clear()
+        
+        # Remember which panels were previously wanted by schedule
+        previously_wanted = set(self._schedule_wants.keys())
+        
+        # Clear schedule wants so we can re-evaluate from scratch
+        self._schedule_wants.clear()
+
+        # Get current time in UTC
+        now_utc = datetime.now(timezone.utc)
+
+        # Collect all panel IDs that appear in the new schedules
+        new_scheduled_panels = set()
 
         for sched in schedules:
             if not sched.get("is_active", True):
                 continue
+            
+            panel_id = sched["panel_id"]
+            new_scheduled_panels.add(panel_id)
+            
             await self._add_schedule_jobs(sched)
+            
+            # Immediately evaluate if we are currently inside the schedule window
+            try:
+                from zoneinfo import ZoneInfo
+                site_tz = ZoneInfo(sched.get("timezone", "UTC"))
+            except Exception:
+                site_tz = timezone.utc
+                
+            now_local = now_utc.astimezone(site_tz)
+            if now_local.weekday() == sched.get("day_of_week"):
+                start_time = sched.get("start_time")
+                end_time = sched.get("end_time")
+                if start_time and end_time:
+                    current_time_str = now_local.strftime("%H:%M")
+                    if start_time <= current_time_str < end_time:
+                        self._schedule_wants[panel_id] = "RUNNING"
+        
+        # Any panel that was previously wanted but is no longer scheduled at all
+        # OR is scheduled but not in its active window → mark STOPPED
+        for panel_id in new_scheduled_panels:
+            if panel_id not in self._schedule_wants:
+                self._schedule_wants[panel_id] = "STOPPED"
+        
+        # Panels that were previously scheduled but are completely removed
+        for panel_id in previously_wanted:
+            if panel_id not in new_scheduled_panels:
+                self._schedule_wants[panel_id] = "STOPPED"
+                        
+        # Trigger reconciliation to apply immediate schedule intent
+        await self._reconcile_fleet()
 
         logger.info("Loaded %d schedule entries", len(schedules))
         
@@ -331,128 +384,210 @@ class RulesEngine:
 
     async def _evaluate_faults(self) -> None:
         """Monitor for failed starts or overloads and start replacement/relief units."""
-        idle_panels: list[str] = []
-        critical_faults = 0
-        overloads = 0
+        sites_data = {}
         
         for pid, state in self._gateway.states.items():
-            if not state.is_reachable or not state.is_data_fresh:
+            if not state.is_reachable:
                 continue
                 
+            site_id = state.site_id
+            if not site_id:
+                continue
+                
+            if site_id not in sites_data:
+                sites_data[site_id] = {
+                    "idle_panels": [],
+                    "critical_faults": 0,
+                    "overloads": 0
+                }
+                
             if state.engine_status == "stopped" and not state.active_alarms:
-                idle_panels.append(pid)
+                sites_data[site_id]["idle_panels"].append(pid)
                 
             # If a panel wants to run (via schedule or threshold) but is faulted
             wants_to_run = self._schedule_wants.get(pid) == "RUNNING" or self._threshold_wants.get(pid) == "RUNNING"
             is_faulted = "fail_to_start" in state.active_alarms or "emergency_stop" in state.active_alarms
             
             if wants_to_run and is_faulted:
-                critical_faults += 1
+                sites_data[site_id]["critical_faults"] += 1
                 
             if state.is_running and "overload_alarm" in state.active_alarms:
-                overloads += 1
+                sites_data[site_id]["overloads"] += 1
                 
-        required_replacements = critical_faults + overloads
-        current_replacements = len(self._fault_started)
-        
-        # Start new replacements if needed
-        while current_replacements < required_replacements and idle_panels:
-            best_backup = await self._pick_backup(idle_panels)
-            if not best_backup:
-                break
-                
-            idle_panels.remove(best_backup)
-            self._fault_started[best_backup] = datetime.now(timezone.utc)
-            self._fault_wants[best_backup] = "RUNNING"
-            current_replacements += 1
-            logger.warning("Fault response: starting replacement unit %s", best_backup)
+        for site_id, data in sites_data.items():
+            required_replacements = data["critical_faults"] + data["overloads"]
             
-        # Stop replacements if faults are cleared
-        if current_replacements > required_replacements:
-            # We have more replacements running than active faults. Stop the oldest.
-            for pid in list(self._fault_started.keys()):
-                if current_replacements <= required_replacements:
+            # Find currently running replacements for this site
+            site_replacements = [
+                pid for pid in self._fault_started.keys() 
+                if self._gateway.states.get(pid) and self._gateway.states[pid].site_id == site_id
+            ]
+            current_replacements = len(site_replacements)
+            idle_panels = data["idle_panels"]
+            
+            # Start new replacements if needed
+            while current_replacements < required_replacements and idle_panels:
+                best_backup = await self._pick_backup(idle_panels)
+                if not best_backup:
                     break
-                self._fault_wants[pid] = "STOPPED"
-                del self._fault_started[pid]
-                current_replacements -= 1
-                logger.info("Fault response: stopping unneeded replacement unit %s", pid)
+                    
+                idle_panels.remove(best_backup)
+                self._fault_started[best_backup] = datetime.now(timezone.utc)
+                self._fault_wants[best_backup] = "RUNNING"
+                current_replacements += 1
+                site_replacements.append(best_backup)
+                logger.warning("Fault response [site %s]: starting replacement unit %s", site_id[:8], best_backup)
+                
+            # Stop replacements if faults are cleared
+            if current_replacements > required_replacements:
+                for pid in list(site_replacements):
+                    if current_replacements <= required_replacements:
+                        break
+                    self._fault_wants[pid] = "STOPPED"
+                    del self._fault_started[pid]
+                    current_replacements -= 1
+                    logger.info("Fault response [site %s]: stopping unneeded replacement unit %s", site_id[:8], pid)
 
     async def _evaluate_single_threshold(self, threshold: dict[str, Any]) -> None:
-        """Evaluate a single threshold rule."""
+        """Evaluate a single threshold rule.
+        
+        START: Triggers when ANY individual running unit's load >= start_pct.
+        STOP/RELEASE: Triggers when total facility load % drops below the per-backup release threshold.
+        Release order: highest priority number (lowest priority) released first.
+        """
         site_id = threshold["site_id"]
         start_pct = float(threshold["start_pct"])
-        stop_pct = float(threshold["stop_pct"])
         dwell_seconds = threshold["dwell_seconds"]
 
-        # Calculate total site load across all running panels
-        total_load_pct = 0.0
+        # Collect running and idle panels for this site
         running_panels: list[str] = []
         idle_panels: list[str] = []
+        max_unit_load = 0.0
+        total_load_kw = 0.0
+        total_rated_kw = 0.0
+        running_capacity_kw = 0.0
+        panel_capacities = {}
 
         for pid, state in self._gateway.states.items():
-            if not state.is_reachable or not state.is_data_fresh:
+            if state.site_id != site_id:
                 continue
+            if not state.is_reachable:
+                continue
+                
+            # Always add to total site capacity regardless of running state
+            panel_kw = 0.0
+            if getattr(self, "_get_panel", None):
+                panel_info = await self._get_panel(pid)
+                if panel_info:
+                    panel_kw = float(panel_info.get("rated_kw", 0.0) or 0.0)
+            
+            panel_capacities[pid] = panel_kw
+            total_rated_kw += panel_kw
+
             if state.is_running:
-                total_load_pct += state.load_kw_percent
                 running_panels.append(pid)
+                total_load_kw += state.load_kw
+                running_capacity_kw += panel_kw
+                unit_load_pct = state.load_kw_percent
+                if unit_load_pct > max_unit_load:
+                    max_unit_load = unit_load_pct
             elif state.engine_status == "stopped":
                 idle_panels.append(pid)
 
+        # Remove any panels from _threshold_started that are no longer running
+        for pid in list(self._threshold_started.keys()):
+            p_state = self._gateway.states.get(pid)
+            if not p_state or not p_state.is_running:
+                del self._threshold_started[pid]
+
         if not running_panels:
-            return  # No panels running — nothing to evaluate
+            return
 
-        # Average load across running panels
-        avg_load = total_load_pct / len(running_panels) if running_panels else 0
+        # Calculate total facility load percentage
+        total_facility_load_pct = (total_load_kw / total_rated_kw * 100.0) if total_rated_kw > 0 else 0.0
+        avg_load = sum(self._gateway.states[p].load_kw_percent for p in running_panels) / len(running_panels)
 
-        # LOAD TOO HIGH — start a backup
-        if avg_load >= start_pct and idle_panels:
-            # Check for max parallel units
-            site_info = await self._get_site(site_id) if self._get_site else None
-            max_parallel = site_info.get("max_parallel_units") if site_info else None
+        logger.info(
+            "Threshold eval [site %s]: %d running, %d idle, max_unit=%.1f%%, total_facility=%.1f%%, start_pct=%.1f%%",
+            site_id[:8], len(running_panels), len(idle_panels), max_unit_load, total_facility_load_pct, start_pct,
+        )
 
-            if max_parallel and len(running_panels) >= max_parallel:
-                logger.debug(
-                    "Load at %.1f%% but max parallel (%d) reached",
-                    avg_load, max_parallel,
-                )
-                return
-                
-            # Calculate how much kW capacity we need to add to get the average load below the stop_pct
-            total_current_kw = sum(
-                self._gateway.states[pid].load_kw for pid in running_panels 
-                if pid in self._gateway.states
+        # ── START LOGIC: total facility load vs per-backup start thresholds ──
+        if idle_panels:
+            best_backup = await self._pick_backup(idle_panels)
+            if best_backup:
+                start_pct_for_backup = float(threshold.get("start_pct", 70))
+                if getattr(self, "_get_start_thresholds", None):
+                    sts = await self._get_start_thresholds(site_id)
+                    for st in sts:
+                        if st["panel_id"] == best_backup:
+                            start_pct_for_backup = float(st["start_pct"])
+                            break
+
+                if total_facility_load_pct >= start_pct_for_backup:
+                    site_info = await self._get_site(site_id) if self._get_site else None
+                    max_parallel = site_info.get("max_parallel_units") if site_info else None
+
+                    if max_parallel and len(running_panels) >= max_parallel:
+                        logger.info(
+                            "Threshold eval [site %s]: Total load %.1f%% >= %.1f%% but max parallel units (%d) reached",
+                            site_id[:8], total_facility_load_pct, start_pct_for_backup, max_parallel,
+                        )
+                    else:
+                        # Prevent cascade starting: Cooldown before starting another backup for this site
+                        recent_start = False
+                        now_utc = datetime.now(timezone.utc)
+                        for started_pid, started_at in self._threshold_started.items():
+                            p_state = self._gateway.states.get(started_pid)
+                            if p_state and p_state.site_id == site_id:
+                                if started_at.tzinfo is None:
+                                    started_at = started_at.replace(tzinfo=timezone.utc)
+                                if (now_utc - started_at).total_seconds() < 30.0:
+                                    recent_start = True
+                                    break
+                        
+                        if recent_start:
+                            logger.debug("Threshold eval [site %s]: Delaying start due to recent backup start (prevent cascade)", site_id[:8])
+                        else:
+                            if best_backup in self._threshold_started:
+                                best_state = self._gateway.states.get(best_backup)
+                                if best_state and best_state.is_running:
+                                    pass
+                                else:
+                                    del self._threshold_started[best_backup]
+                            
+                            self._threshold_started[best_backup] = datetime.now(timezone.utc)
+                            self._threshold_wants[best_backup] = "RUNNING"
+                            logger.info(
+                                "Threshold rule [site %s]: starting backup %s (total facility load %.1f%% >= start %.1f%%)",
+                                site_id[:8], best_backup, total_facility_load_pct, start_pct_for_backup,
+                            )
+                            return # Block release logic since we just started a unit
+
+        # ── RELEASE LOGIC: total facility load vs per-backup release thresholds ──
+        if self._threshold_started:
+            # Get per-backup release thresholds
+            release_thresholds = {}
+            if getattr(self, "_get_release_thresholds", None):
+                rts = await self._get_release_thresholds(site_id)
+                for rt in rts:
+                    release_thresholds[rt["panel_id"]] = {
+                        "release_pct": float(rt["release_pct"]),
+                        "priority_order": rt["priority_order"],
+                    }
+
+            # Check each threshold-started backup for release eligibility
+            # Release in reverse priority order (highest priority_order first = lowest priority backup)
+            started_backups = list(self._threshold_started.items())
+            # Sort by priority_order descending (release lowest priority backups first)
+            started_backups.sort(
+                key=lambda x: release_thresholds.get(x[0], {}).get("priority_order", 999),
+                reverse=True,
             )
-            total_rated_kw = 0.0
-            for pid in running_panels:
-                panel_info = await self._get_panel(pid) if getattr(self, "_get_panel", None) else None
-                if panel_info:
-                    total_rated_kw += panel_info.get("rated_kw", 0.0)
-            
-            needed_kw = 0.0
-            if stop_pct > 0 and total_rated_kw > 0:
-                target_total_capacity = total_current_kw / (stop_pct / 100.0)
-                needed_kw = target_total_capacity - total_rated_kw
 
-            # Pick backup with fewest run hours, trying to meet needed_kw
-            best_backup = await self._pick_backup(idle_panels, needed_kw)
-            if not best_backup:
-                return
-
-            # Don't start if already started by threshold
-            if best_backup in self._threshold_started:
-                return
-
-            self._threshold_started[best_backup] = datetime.now(timezone.utc)
-            self._threshold_wants[best_backup] = "RUNNING"
-            logger.info(
-                "Threshold rule: wants backup %s RUNNING (load %.1f%% > %.1f%%)",
-                best_backup, avg_load, start_pct,
-            )
-
-        # LOAD DROPPED — stop backup (with dwell time)
-        elif avg_load <= stop_pct:
-            for panel_id, started_at in list(self._threshold_started.items()):
+            for panel_id, started_at in started_backups:
+                if started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=timezone.utc)
                 elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
                 if elapsed < dwell_seconds:
                     logger.debug(
@@ -461,22 +596,29 @@ class RulesEngine:
                     )
                     continue
 
-                self._threshold_wants[panel_id] = "STOPPED"
-                del self._threshold_started[panel_id]
-                logger.info(
-                    "Threshold rule: wants backup %s STOPPED (load %.1f%% < %.1f%%)",
-                    panel_id, avg_load, stop_pct,
-                )
+                rt_info = release_thresholds.get(panel_id)
+                release_pct = rt_info["release_pct"] if rt_info else float(threshold.get("stop_pct", 50))
+
+                if total_facility_load_pct <= release_pct:
+                    self._threshold_wants[panel_id] = "STOPPED"
+                    del self._threshold_started[panel_id]
+                    logger.info(
+                        "Threshold rule [site %s]: releasing backup %s (total facility load %.1f%% <= release %.1f%%)",
+                        site_id[:8], panel_id, total_facility_load_pct, release_pct
+                    )
 
     async def _pick_backup(self, idle_panels: list[str], needed_kw: float = 0.0) -> str | None:
-        """Select the best backup panel: maintenance skip, lowest lead_rotation_order, lowest priority, fewest run hours."""
+        """Select the best backup panel: maintenance skip, no alarms, highest priority (lowest number), fewest run hours."""
         if not idle_panels:
             return None
 
         candidates = []
         for pid in idle_panels:
             state = self._gateway.states.get(pid)
-            if not state or not getattr(state, "is_data_fresh", True):
+            if not state:
+                continue
+            # Skip candidates with active alarms
+            if state.active_alarms:
                 continue
                 
             priority = 100
@@ -488,28 +630,34 @@ class RulesEngine:
                 panel_info = await self._get_panel(pid)
                 if panel_info:
                     maintenance_mode = panel_info.get("maintenance_mode", False)
-                    priority = panel_info.get("priority", 100)
                     lead_rotation_order = panel_info.get("lead_rotation_order", 100)
-                    rated_kw = panel_info.get("rated_kw", 0.0)
-
+                    priority = panel_info.get("priority", 100)
+                    rated_kw = float(panel_info.get("rated_kw", 0.0) or 0.0)
+                    
             if maintenance_mode:
                 continue
-
-            candidates.append((pid, lead_rotation_order, priority, state.run_hours, rated_kw))
+                
+            candidates.append([pid, lead_rotation_order, priority, state.run_hours, rated_kw])
+            
+        # Overwrite priority with daily priorities if available
+        if getattr(self, "_get_daily_priorities", None):
+            current_day = datetime.now(timezone.utc).weekday()
+            daily_priorities = await self._get_daily_priorities()
+            priority_map = {
+                dp.get("panel_id"): dp.get("priority")
+                for dp in daily_priorities
+                if dp.get("day_of_week") == current_day and dp.get("priority") is not None
+            }
+            for candidate in candidates:
+                pid = candidate[0]
+                if pid in priority_map:
+                    candidate[2] = priority_map[pid]
 
         if not candidates:
             return None
 
-        # Sort by: lead_rotation_order, priority, then run hours
-        candidates.sort(key=lambda c: (c[1], c[2], c[3]))
-        
-        if needed_kw > 0:
-            # Try to find one that satisfies the capacity need
-            capable = [c for c in candidates if c[4] >= needed_kw]
-            if capable:
-                return capable[0][0]
-
-        # Fallback to the best one available even if it doesn't meet the full kW need
+        # Sort strictly by priority (1 is first, then 2, etc.), then run hours
+        candidates.sort(key=lambda c: (c[2], c[3]))
         return candidates[0][0]
 
     # ── Override Checks ───────────────────────────────────────────────

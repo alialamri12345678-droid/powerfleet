@@ -1,16 +1,35 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../api/client';
 
-export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId }) {
+export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId, initialData = null }) {
   const [name, setName] = useState('');
   const [transportType, setTransportType] = useState('tcp');
   const [address, setAddress] = useState('127.0.0.1:5020');
   const [unitId, setUnitId] = useState('4');
   const [ratedKw, setRatedKw] = useState('500');
   const [ratedKvar, setRatedKvar] = useState('150');
-  const [priority, setPriority] = useState('4');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (initialData) {
+        setName(initialData.name || '');
+        setTransportType(initialData.transport_type || 'tcp');
+        setAddress(initialData.address || '');
+        setUnitId(initialData.unit_id?.toString() || '');
+        setRatedKw(initialData.rated_kw?.toString() || '');
+        setRatedKvar(initialData.rated_kvar?.toString() || '');
+      } else {
+        setName('');
+        setTransportType('tcp');
+        setAddress('127.0.0.1:5020');
+        setUnitId('4');
+        setRatedKw('500');
+        setRatedKvar('150');
+      }
+    }
+  }, [isOpen, initialData]);
 
   if (!isOpen) return null;
 
@@ -26,14 +45,20 @@ export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId 
         unit_id: Number(unitId),
         rated_kw: Number(ratedKw),
         rated_kvar: Number(ratedKvar),
-        priority: Number(priority),
       };
-      const created = await apiRequest('/panels', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-      setName('');
-      onGeneratorCreated(created);
+      let res;
+      if (initialData) {
+        res = await apiRequest(`/panels/${initialData.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await apiRequest('/panels', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+      }
+      onGeneratorCreated(res);
       onClose();
     } catch (err) {
       setError(err.message);
@@ -62,15 +87,9 @@ export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId 
         padding: '2rem',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '1.25rem' }}>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-            Add Generator to Site
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--text-tertiary)' }}
-          >
-            &times;
+          <h2 style={{ fontSize: '1.125rem', fontWeight: 600 }}>{initialData ? 'Edit Generator' : 'Add Generator'}</h2>
+          <button type="button" onClick={onClose} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+            ✕
           </button>
         </div>
 
@@ -182,35 +201,12 @@ export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId 
             </div>
           </div>
 
-          <div className="form-group" style={{ marginBottom: '1.75rem' }}>
-            <label className="form-label" htmlFor="gen-priority">Backup Priority (Lower number = starts first)</label>
-            <input
-              id="gen-priority"
-              type="number"
-              min="1"
-              max="100"
-              className="form-input"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value)}
-              required
-            />
-          </div>
 
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={onClose}
-              disabled={submitting}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={submitting}
-            >
-              {submitting ? 'Adding...' : 'Add Generator'}
+
+          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={submitting}>
+              {submitting ? 'Saving...' : (initialData ? 'Save Changes' : 'Add Generator')}
             </button>
           </div>
         </form>

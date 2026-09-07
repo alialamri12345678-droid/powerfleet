@@ -45,18 +45,19 @@ class FleetDispatcher:
             if pid in desired_fleet_state:
                 if state == "RUNNING":
                     desired_fleet_state[pid] = "RUNNING"
-                elif state == "STOPPED" and desired_fleet_state[pid] != "RUNNING":
-                    # Only let threshold stop it if the schedule doesn't want it running
-                    # Wait, if schedule wants it running, threshold shouldn't stop it.
-                    pass
+                elif state == "STOPPED":
+                    # Only stop if schedule doesn't want it running
+                    if schedule_wants.get(pid) != "RUNNING":
+                        desired_fleet_state[pid] = "STOPPED"
                 
         # 3. Apply Fault Response (Overrides Threshold/Schedule)
         for pid, state in fault_wants.items():
             if pid in desired_fleet_state:
                 if state == "RUNNING":
                     desired_fleet_state[pid] = "RUNNING"
-                elif state == "STOPPED" and desired_fleet_state[pid] != "RUNNING":
-                    pass
+                elif state == "STOPPED":
+                    if schedule_wants.get(pid) != "RUNNING" and threshold_wants.get(pid) != "RUNNING":
+                        desired_fleet_state[pid] = "STOPPED"
                 
         # 4. Apply Overrides (Absolute highest priority)
         for pid, state in overrides.items():
@@ -83,26 +84,31 @@ class FleetDispatcher:
                 continue
                 
             actual_state = self._gateway.states.get(panel_id)
-            if not actual_state or not actual_state.is_reachable or not getattr(actual_state, "is_data_fresh", True):
+            if not actual_state:
+                logger.warning("FleetDispatcher: No state for panel %s, skipping", panel_id)
                 continue
                 
             is_running = actual_state.is_running
             
             if desired == "RUNNING" and not is_running:
                 # Need to start
-                logger.info("FleetDispatcher: Starting %s to reach desired RUNNING state", panel_id)
-                await self._gateway.send_remote_start(
+                logger.info("FleetDispatcher: Starting %s (reachable=%s)", panel_id, actual_state.is_reachable)
+                success, msg = await self._gateway.send_remote_start(
                     panel_id=panel_id,
                     triggered_by="dispatcher",
                     reason=f"{reason_context} - Desired: RUNNING",
                     load_kw_at_decision=current_fleet_load,
                 )
+                if not success:
+                    logger.warning("FleetDispatcher: Start command FAILED for %s: %s", panel_id, msg)
             elif desired == "STOPPED" and is_running:
                 # Need to stop
-                logger.info("FleetDispatcher: Stopping %s to reach desired STOPPED state", panel_id)
-                await self._gateway.send_remote_stop(
+                logger.info("FleetDispatcher: Stopping %s (reachable=%s)", panel_id, actual_state.is_reachable)
+                success, msg = await self._gateway.send_remote_stop(
                     panel_id=panel_id,
                     triggered_by="dispatcher",
                     reason=f"{reason_context} - Desired: STOPPED",
                     load_kw_at_decision=current_fleet_load,
                 )
+                if not success:
+                    logger.warning("FleetDispatcher: Stop command FAILED for %s: %s", panel_id, msg)

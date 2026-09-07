@@ -82,19 +82,10 @@ async def update_bulk_schedules(
     for s in created_schedules:
         await session.refresh(s)
 
-    # Reload into running rules engine
-    sched_dicts = [
-        {
-            "id": s.id,
-            "panel_id": s.panel_id,
-            "day_of_week": s.day_of_week,
-            "start_time": s.start_time,
-            "end_time": s.end_time,
-            "is_active": s.is_active,
-        }
-        for s in created_schedules
-    ]
-    await rules_engine.load_schedules(sched_dicts)
+    # Reload all active schedules into running rules engine with their site timezones
+    from app.main import rules_get_schedules
+    all_scheds = await rules_get_schedules()
+    await rules_engine.load_schedules(all_scheds)
 
     return [ScheduleResponse.model_validate(s) for s in created_schedules]
 
@@ -164,17 +155,10 @@ async def apply_preset(
         await session.refresh(s)
 
     # Sync with rules engine
-    sched_dicts = [
-        {
-            "id": s.id,
-            "panel_id": s.panel_id,
-            "day_of_week": s.day_of_week,
-            "start_time": s.start_time,
-            "end_time": s.end_time,
-            "is_active": s.is_active,
-        }
-        for s in new_schedules
-    ]
+    from app.main import rules_get_schedules
+    all_scheds = await rules_get_schedules()
+    await rules_engine.load_schedules(all_scheds)
+
     return [ScheduleResponse.model_validate(s) for s in new_schedules]
 
 

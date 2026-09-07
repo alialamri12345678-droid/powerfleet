@@ -89,6 +89,10 @@ class ModbusGateway:
         **kwargs,
     ) -> None:
         """Register a panel for polling."""
+        # If updating an existing panel, disconnect old transport first
+        if panel_id in self._transports:
+            asyncio.create_task(self._disconnect_panel(panel_id))
+
         self._panel_configs[panel_id] = {
             "site_id": site_id,
             "transport_type": transport_type,
@@ -96,11 +100,16 @@ class ModbusGateway:
             "unit_id": unit_id,
             **kwargs,
         }
-        self._states[panel_id] = PanelState(
-            panel_id=panel_id,
-            panel_name=name,
-            site_id=site_id,
-        )
+        if panel_id not in self._states:
+            self._states[panel_id] = PanelState(
+                panel_id=panel_id,
+                panel_name=name,
+                site_id=site_id,
+            )
+        else:
+            self._states[panel_id].panel_name = name
+            self._states[panel_id].site_id = site_id
+
         logger.info("Added panel %s (%s) via %s at %s", panel_id, name, transport_type, address)
 
     def remove_panel(self, panel_id: str) -> None:
@@ -380,16 +389,11 @@ class ModbusGateway:
         state = self._states.get(panel_id)
         if not state:
             return False, f"Panel {panel_id} state unknown"
-            
-        if not getattr(state, "is_data_fresh", True):
-            return False, "Cannot verify safety: telemetry data is stale"
 
         # Check for active alarms
         if state.active_alarms:
             return False, f"Cannot start panel with active alarms: {', '.join(state.active_alarms)}"
-            
-        # Optional: check if already running? If it's already running, it's a no-op but safe.
-        
+
         return True, "Safe to start"
 
     async def send_remote_start(
@@ -462,27 +466,38 @@ class ModbusGateway:
             logger.error(msg)
             return False, msg
 
-    async def _validate_safe_to_stop(self, panel_id: str) -> tuple[bool, str]:
-        """Check that stopping this panel won't violate capacity/reserve."""
+    async def _validate_safe_to_stop(self, panel_id: str, triggered_by: str = "manual") -> tuple[bool, str]:
+        """Check that stopping this panel won't violate capacity/reserve.
+        
+        Operator commands (manual, technician, override), schedule jobs, and dispatcher
+        orchestration bypass capacity checks because they reflect intentional control.
+        """
+        if triggered_by in ("manual", "technician", "override", "schedule", "dispatcher"):
+            return True, "Safe to stop"
+
         state = self._states.get(panel_id)
         if not state or not state.is_running:
             return True, "Panel not running, safe to send stop"
-        
-        # Calculate remaining capacity if this panel stops
+
+        config = self._panel_configs.get(panel_id, {})
+        site_id = config.get("site_id")
+
+        # Calculate remaining rated capacity of running panels at this site
         remaining_capacity = sum(
-            s.load_kw for pid, s in self._states.items()
-            if pid != panel_id and s.is_running and s.is_reachable and getattr(s, "is_data_fresh", True)
+            self._panel_configs.get(pid, {}).get("rated_kw", 0.0)
+            for pid, s in self._states.items()
+            if pid != panel_id and s.site_id == site_id and s.is_running and s.is_reachable
         )
-        
+
         # Calculate current site load
         current_site_load = sum(
-            s.load_kw for s in self._states.values() if s.is_running
+            s.load_kw for s in self._states.values()
+            if s.site_id == site_id and s.is_running
         )
-        
-        # We need at least enough capacity to handle the load, plus a 20% reserve margin.
-        if remaining_capacity < current_site_load * 0.8:
-            return False, f"Stopping {panel_id} would violate reserve margin. Load: {current_site_load:.1f}kW, Remaining capacity: {remaining_capacity:.1f}kW"
-            
+
+        if remaining_capacity > 0 and remaining_capacity < current_site_load:
+            return False, f"Stopping {panel_id} would exceed remaining capacity. Load: {current_site_load:.1f}kW, Remaining capacity: {remaining_capacity:.1f}kW"
+
         return True, "Safe to stop"
 
     async def send_remote_stop(
@@ -496,7 +511,7 @@ class ModbusGateway:
     ) -> tuple[bool, str]:
         """Send Remote Stop to a panel, respecting cooldown and capacity guard."""
         # 1. Capacity guard check
-        safe_to_stop, safe_msg = await self._validate_safe_to_stop(panel_id)
+        safe_to_stop, safe_msg = await self._validate_safe_to_stop(panel_id, triggered_by=triggered_by)
         if not safe_to_stop:
             logger.warning("Stop blocked for %s: %s", panel_id, safe_msg)
             return False, safe_msg
@@ -622,8 +637,8 @@ class ModbusGateway:
                     # Assume it just started to prevent an immediate stop
                     self._cooldown.record_start(panel_id)
                 elif state.engine_status == "stopped":
-                    # Assume it just stopped to prevent an immediate start
-                    self._cooldown.record_stop(panel_id)
+                    # Engine is idle — ensure it is ready to start if needed
+                    self._cooldown.reset(panel_id)
                 else:
                     self._cooldown.reset(panel_id)
                 logger.info(

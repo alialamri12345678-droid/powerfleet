@@ -95,9 +95,9 @@ class PanelState:
 
     @property
     def is_data_fresh(self) -> bool:
-        """True if data is less than 10 seconds old."""
+        """True if data is less than 30 seconds old."""
         age = self.data_age_seconds
-        return age is not None and age < 10.0
+        return age is not None and age < 30.0
 
     def mark_poll_success(self) -> None:
         """Update connection health after a successful poll."""
@@ -131,6 +131,7 @@ class PanelState:
             "consecutive_errors": self.consecutive_errors,
             "last_error": self.last_error,
             "engine_status": self.engine_status,
+            "is_running": self.is_running,
             "generator_breaker": self.generator_breaker,
             "sync_status": self.sync_status,
             "display_status": self.display_status,

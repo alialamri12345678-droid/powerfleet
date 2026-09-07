@@ -9,6 +9,7 @@ export function SchedulePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
+  const [site, setSite] = useState(null);
 
   // Load panels and existing schedules
   useEffect(() => {
@@ -18,12 +19,14 @@ export function SchedulePage() {
   async function loadData() {
     try {
       setLoading(true);
-      const [panelsData, schedData] = await Promise.all([
+      const [panelsData, schedData, siteData] = await Promise.all([
         apiRequest('/panels'),
         apiRequest('/schedules'),
+        apiRequest('/sites/current').catch(() => null),
       ]);
       setPanels(panelsData);
       setSchedules(schedData);
+      setSite(siteData);
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
     } finally {
@@ -31,9 +34,9 @@ export function SchedulePage() {
     }
   }
 
-  // Check if a specific panel is assigned on a given day
-  const isAssigned = (panelId, dayIndex) => {
-    return schedules.some((s) => s.panel_id === panelId && s.day_of_week === dayIndex && s.is_active);
+  // Get schedule for a specific panel on a given day
+  const getSchedule = (panelId, dayIndex) => {
+    return schedules.find((s) => s.panel_id === panelId && s.day_of_week === dayIndex && s.is_active);
   };
 
   // Toggle duty assignment for a panel on a day
@@ -56,6 +59,16 @@ export function SchedulePage() {
           },
         ];
       }
+    });
+  };
+
+  const handleTimeChange = (panelId, dayIndex, field, value) => {
+    setSchedules((prev) => {
+      const idx = prev.findIndex((s) => s.panel_id === panelId && s.day_of_week === dayIndex);
+      if (idx === -1) return prev;
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], [field]: value };
+      return copy;
     });
   };
 
@@ -125,7 +138,7 @@ export function SchedulePage() {
         <div>
           <h1 className="page-title">Duty Schedule</h1>
           <p className="page-subtitle">
-            Choose which generators are on primary duty throughout the week
+            Choose which generators are on primary duty throughout the week &bull; Facility Timezone: <strong style={{ color: 'var(--text-primary)' }}>{site?.timezone || 'UTC'}</strong>
           </p>
         </div>
         <button
@@ -231,15 +244,17 @@ export function SchedulePage() {
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{panel.rated_kw} kW</div>
                 </td>
                 {DAY_LABELS.map((_, dayIdx) => {
-                  const assigned = isAssigned(panel.id, dayIdx);
+                  const schedule = getSchedule(panel.id, dayIdx);
+                  const assigned = !!schedule;
                   return (
-                    <td key={dayIdx} style={{ textAlign: 'center' }}>
+                    <td key={dayIdx} style={{ textAlign: 'center', verticalAlign: 'top', padding: '0.75rem 0.25rem' }}>
                       <button
                         type="button"
                         onClick={() => handleToggleDay(panel.id, dayIdx)}
                         style={{
-                          width: '36px',
-                          height: '36px',
+                          width: '100%',
+                          maxWidth: '60px',
+                          height: '32px',
                           borderRadius: '4px',
                           border: assigned ? '1px solid var(--accent-teal)' : '1px solid var(--border-subtle)',
                           backgroundColor: assigned ? 'var(--accent-teal)' : '#FFFFFF',
@@ -249,10 +264,30 @@ export function SchedulePage() {
                           fontSize: '0.75rem',
                           fontFamily: 'inherit',
                           transition: 'all 0.15s ease',
+                          marginBottom: assigned ? '0.5rem' : '0',
                         }}
                       >
                         {assigned ? 'ON' : 'off'}
                       </button>
+                      
+                      {assigned && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'center' }}>
+                          <input
+                            type="time"
+                            value={schedule.start_time}
+                            onChange={(e) => handleTimeChange(panel.id, dayIdx, 'start_time', e.target.value)}
+                            style={{ width: '85px', fontSize: '0.7rem', padding: '2px', border: '1px solid var(--border-subtle)', borderRadius: '3px' }}
+                            title="Start Time"
+                          />
+                          <input
+                            type="time"
+                            value={schedule.end_time}
+                            onChange={(e) => handleTimeChange(panel.id, dayIdx, 'end_time', e.target.value)}
+                            style={{ width: '85px', fontSize: '0.7rem', padding: '2px', border: '1px solid var(--border-subtle)', borderRadius: '3px' }}
+                            title="End Time"
+                          />
+                        </div>
+                      )}
                     </td>
                   );
                 })}

@@ -11,6 +11,7 @@ export function GeneratorCard({
   todayIndex = 0,
   onManualStart,
   onManualStop,
+  onEditPanel,
   onDeletePanel,
   isTechnician = false,
 }) {
@@ -76,6 +77,17 @@ export function GeneratorCard({
         >
           Stop Unit
         </button>
+        {onEditPanel && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ fontSize: '0.75rem', padding: '0.375rem 0.5rem' }}
+            title="Edit generator settings"
+            onClick={() => onEditPanel(panel)}
+          >
+            Edit
+          </button>
+        )}
         {onDeletePanel && (
           <button
             type="button"

@@ -44,7 +44,6 @@ logger = logging.getLogger("scada")
 # Global singletons
 gateway_instance: ModbusGateway | None = None
 rules_engine_instance: RulesEngine | None = None
-mock_server_task: asyncio.Task | None = None
 
 
 async def seed_initial_data():
@@ -224,18 +223,25 @@ async def broadcast_state_update(panel_id: str, state: PanelState):
 # ── Rules Engine Data Accessors ──────────────────────────────────────────
 async def rules_get_schedules():
     async with async_session_factory() as session:
-        res = await session.execute(select(Schedule).where(Schedule.is_active.is_(True)))
-        schedules = res.scalars().all()
+        stmt = (
+            select(Schedule, Site.timezone)
+            .join(Site, Schedule.site_id == Site.id)
+            .where(Schedule.is_active.is_(True))
+        )
+        res = await session.execute(stmt)
+        rows = res.all()
         return [
             {
                 "id": s.id,
+                "site_id": s.site_id,
                 "panel_id": s.panel_id,
                 "day_of_week": s.day_of_week,
                 "start_time": s.start_time,
                 "end_time": s.end_time,
                 "is_active": s.is_active,
+                "timezone": tz or "UTC",
             }
-            for s in schedules
+            for s, tz in rows
         ]
 
 
@@ -256,6 +262,58 @@ async def rules_get_schedule_exceptions():
             for e in exceptions
         ]
 
+
+async def rules_get_daily_priorities():
+    async with async_session_factory() as session:
+        from app.models.daily_priority import DailyPriority
+        res = await session.execute(select(DailyPriority))
+        priorities = res.scalars().all()
+        return [
+            {
+                "panel_id": p.panel_id,
+                "day_of_week": p.day_of_week,
+                "priority": p.priority,
+            }
+            for p in priorities
+        ]
+
+
+async def rules_get_start_thresholds(site_id: str = None):
+    """Get per-backup start thresholds, optionally filtered by site_id."""
+    async with async_session_factory() as session:
+        from app.models.start_threshold import StartThreshold
+        stmt = select(StartThreshold)
+        if site_id:
+            stmt = stmt.where(StartThreshold.site_id == site_id)
+        res = await session.execute(stmt)
+        sts = res.scalars().all()
+        return [
+            {
+                "panel_id": st.panel_id,
+                "site_id": st.site_id,
+                "start_pct": st.start_pct,
+                "priority_order": st.priority_order,
+            }
+            for st in sts
+        ]
+async def rules_get_release_thresholds(site_id: str = None):
+    """Get per-backup release thresholds, optionally filtered by site_id."""
+    async with async_session_factory() as session:
+        from app.models.release_threshold import ReleaseThreshold
+        stmt = select(ReleaseThreshold)
+        if site_id:
+            stmt = stmt.where(ReleaseThreshold.site_id == site_id)
+        res = await session.execute(stmt)
+        rts = res.scalars().all()
+        return [
+            {
+                "panel_id": rt.panel_id,
+                "site_id": rt.site_id,
+                "release_pct": rt.release_pct,
+                "priority_order": rt.priority_order,
+            }
+            for rt in rts
+        ]
 
 async def rules_get_thresholds():
     async with async_session_factory() as session:
@@ -339,8 +397,8 @@ async def rules_reconstruct_threshold_state():
                 
         threshold_started = {}
         for panel_id, evt in latest_commands.items():
-            # If the last command was a start triggered by threshold
-            if evt.command == "remote_start" and evt.triggered_by == "threshold":
+            # If the last command was a start triggered by threshold or dispatcher
+            if evt.command == "remote_start" and evt.triggered_by in ("threshold", "dispatcher"):
                 threshold_started[panel_id] = evt.timestamp
                 
         return threshold_started
@@ -349,7 +407,7 @@ async def rules_reconstruct_threshold_state():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: database setup, background services, graceful shutdown."""
-    global gateway_instance, rules_engine_instance, mock_server_task
+    global gateway_instance, rules_engine_instance
 
     logger.info("Initializing SCADA Gateway Backend...")
 
@@ -360,15 +418,7 @@ async def lifespan(app: FastAPI):
     # 2. Seed default data if needed
     await seed_initial_data()
 
-    # 3. Start Mock Modbus server if enabled
-    if settings.mock_modbus_enabled:
-        from app.modbus.mock_server import run_mock_server
-        logger.info("Starting mock Modbus server on %s:%d...", settings.mock_modbus_host, settings.mock_modbus_port)
-        mock_server_task = asyncio.create_task(run_mock_server())
-        # Give mock server 1s to bind socket
-        await asyncio.sleep(1.0)
-
-    # 4. Initialize Modbus Gateway
+    # 3. Initialize Modbus Gateway
     gateway_instance = ModbusGateway()
     gateway_instance.set_event_logger(log_event_to_db)
     gateway_instance.on_state_update(handle_panel_state_update)
@@ -387,7 +437,7 @@ async def lifespan(app: FastAPI):
                 unit_id=p.unit_id,
             )
 
-    # 5. Initialize Rules Engine
+    # 4. Initialize Rules Engine
     rules_engine_instance = RulesEngine(gateway_instance)
     rules_engine_instance.set_data_accessors(
         get_schedules=rules_get_schedules,
@@ -397,7 +447,10 @@ async def lifespan(app: FastAPI):
         get_site=rules_get_site,
         get_threshold_state=rules_reconstruct_threshold_state,
         get_panel=rules_get_panel,
+        get_release_thresholds=rules_get_release_thresholds,
+        get_start_thresholds=rules_get_start_thresholds,
     )
+    rules_engine_instance._get_daily_priorities = rules_get_daily_priorities
 
     # Reconcile actual panel states before starting rules
     await gateway_instance.reconcile_panel_states()
@@ -420,8 +473,6 @@ async def lifespan(app: FastAPI):
             await rules_engine_instance.stop()
         if gateway_instance:
             await gateway_instance.stop()
-        if mock_server_task:
-            mock_server_task.cancel()
         await engine.dispose()
         logger.info("Shutdown complete.")
 

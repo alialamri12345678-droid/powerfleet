@@ -1,5 +1,6 @@
 """Panels API router with site scoping and command dispatch."""
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,13 +12,22 @@ from app.api.schemas import (
     PanelCreate,
     PanelResponse,
     PanelUpdate,
+    DailyPriorityResponse,
+    BulkDailyPriorityUpdate,
 )
 from app.auth.models import User
 from app.db.session import get_session
 from app.db.tenant import scoped_get, scoped_select
-from app.dependencies import get_current_user, get_gateway, require_technician
+from app.dependencies import get_current_user, get_gateway, get_rules_engine, require_technician
 from app.models.panel import Panel
+from app.models.daily_priority import DailyPriority
+from app.models.release_threshold import ReleaseThreshold
+from app.models.start_threshold import StartThreshold
+from app.models.threshold import Threshold
 from app.modbus.gateway import ModbusGateway
+from app.rules.engine import RulesEngine
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/panels", tags=["Panels"])
 
@@ -47,14 +57,23 @@ async def get_panel(
     return PanelResponse.model_validate(panel)
 
 
+DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
 @router.post("", response_model=PanelResponse, status_code=status.HTTP_201_CREATED)
 async def create_panel(
     body: PanelCreate,
     user: Annotated[User, Depends(require_technician)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway, Depends(get_gateway)],
+    rules_engine: Annotated[RulesEngine, Depends(get_rules_engine)],
 ) -> PanelResponse:
-    """Create a new panel configuration (technician only)."""
+    """Create a new panel. Always assigns priority N+1 (last). Auto-seeds daily priorities and release threshold."""
+    stmt = scoped_select(Panel, user.site_id)
+    existing_panels = (await session.execute(stmt)).scalars().all()
+    n_panels = len(existing_panels)
+    assigned_priority = n_panels + 1  # Always last position
+
     panel = Panel(
         site_id=user.site_id,
         name=body.name,
@@ -63,9 +82,45 @@ async def create_panel(
         unit_id=body.unit_id,
         rated_kw=body.rated_kw,
         rated_kvar=body.rated_kvar,
-        priority=body.priority,
+        priority=assigned_priority,
     )
     session.add(panel)
+    await session.flush()  # Get panel.id before seeding related rows
+
+    # Auto-seed daily priorities for all 7 days
+    for day in range(7):
+        dp = DailyPriority(
+            site_id=user.site_id,
+            panel_id=panel.id,
+            day_of_week=day,
+            priority=assigned_priority,
+        )
+        session.add(dp)
+
+    # Auto-seed release threshold using site's default stop_pct
+    thresh_stmt = scoped_select(Threshold, user.site_id).where(Threshold.panel_id.is_(None))
+    thresh_result = await session.execute(thresh_stmt)
+    site_thresh = thresh_result.scalar_one_or_none()
+    default_release_pct = float(site_thresh.stop_pct) if site_thresh else 50.0
+
+    rt = ReleaseThreshold(
+        site_id=user.site_id,
+        panel_id=panel.id,
+        release_pct=default_release_pct,
+        priority_order=assigned_priority,
+    )
+    session.add(rt)
+
+    # Auto-seed start threshold using site's default start_pct
+    default_start_pct = float(site_thresh.start_pct) if site_thresh else 70.0
+    st = StartThreshold(
+        site_id=user.site_id,
+        panel_id=panel.id,
+        start_pct=default_start_pct,
+        priority_order=assigned_priority,
+    )
+    session.add(st)
+
     await session.commit()
     await session.refresh(panel)
 
@@ -80,6 +135,14 @@ async def create_panel(
             unit_id=panel.unit_id,
         )
 
+    # Reload rules engine schedules so it knows about the new panel
+    try:
+        from app.main import rules_get_schedules
+        all_scheds = await rules_get_schedules()
+        await rules_engine.load_schedules(all_scheds)
+    except Exception as exc:
+        logger.warning("Failed to reload schedules after panel create: %s", exc)
+
     return PanelResponse.model_validate(panel)
 
 
@@ -91,12 +154,28 @@ async def update_panel(
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
 ) -> PanelResponse:
-    """Update panel properties (technician only)."""
+    """Update panel properties (technician only). Enforces unique priority <= N."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
     if panel is None:
         raise HTTPException(status_code=404, detail="Panel not found")
 
     update_data = body.model_dump(exclude_unset=True)
+
+    if "priority" in update_data and update_data["priority"] is not None:
+        new_prio = update_data["priority"]
+        stmt = scoped_select(Panel, user.site_id)
+        all_panels = (await session.execute(stmt)).scalars().all()
+        n_panels = len(all_panels)
+        if new_prio < 1 or new_prio > n_panels:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Priority ({new_prio}) cannot exceed number of generators in the site ({n_panels}).",
+            )
+        # Swap priority with existing panel if another generator has this priority
+        other = next((p for p in all_panels if p.id != panel_id and p.priority == new_prio), None)
+        if other:
+            other.priority = panel.priority
+
     for field, value in update_data.items():
         setattr(panel, field, value)
 
@@ -123,8 +202,9 @@ async def delete_panel(
     user: Annotated[User, Depends(require_technician)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
+    rules_engine: Annotated[RulesEngine, Depends(get_rules_engine)],
 ):
-    """Decommission and delete a panel (technician only). Unregisters from gateway."""
+    """Decommission and delete a panel. Cleans up related data, re-compacts priorities, reloads rules."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
     if panel is None:
         raise HTTPException(status_code=404, detail="Panel not found")
@@ -133,12 +213,139 @@ async def delete_panel(
     if gateway:
         gateway.remove_panel(panel_id)
 
-    # Delete from database (cascades to schedules and setpoints)
+    # Delete release thresholds for this panel
+    rt_stmt = select(ReleaseThreshold).where(ReleaseThreshold.panel_id == panel_id)
+    rt_result = await session.execute(rt_stmt)
+    for rt in rt_result.scalars():
+        await session.delete(rt)
+
+    # Delete daily priorities for this panel (SQLite doesn't enforce FK cascades)
+    dp_stmt = select(DailyPriority).where(DailyPriority.panel_id == panel_id)
+    dp_result = await session.execute(dp_stmt)
+    for dp in dp_result.scalars():
+        await session.delete(dp)
+
+    # Delete from database (cascades to schedules, setpoints via ORM relationships)
     await session.delete(panel)
+    await session.flush()
+
+    # Re-compact remaining panels' priorities so they are 1..N-1
+    stmt = scoped_select(Panel, user.site_id).order_by(Panel.priority)
+    remaining = (await session.execute(stmt)).scalars().all()
+    for idx, p in enumerate(remaining, start=1):
+        p.priority = idx
+
+    # Re-compact release threshold priority orders
+    rt_stmt2 = scoped_select(ReleaseThreshold, user.site_id).order_by(ReleaseThreshold.priority_order)
+    remaining_rts = (await session.execute(rt_stmt2)).scalars().all()
+    for idx, rt in enumerate(remaining_rts, start=1):
+        rt.priority_order = idx
+
     await session.commit()
+
+    # Reload rules engine schedules
+    try:
+        from app.main import rules_get_schedules
+        all_scheds = await rules_get_schedules()
+        await rules_engine.load_schedules(all_scheds)
+    except Exception as exc:
+        logger.warning("Failed to reload schedules after panel delete: %s", exc)
+
     return None
 
 
+@router.get("/priorities/daily", response_model=list[DailyPriorityResponse])
+async def get_daily_priorities(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[DailyPriorityResponse]:
+    """Get all daily priorities for panels in the current site."""
+    stmt = scoped_select(DailyPriority, user.site_id)
+    result = await session.execute(stmt)
+    priorities = result.scalars().all()
+    return [DailyPriorityResponse.model_validate(p) for p in priorities]
+
+
+@router.post("/priorities/daily/bulk", response_model=list[DailyPriorityResponse])
+async def update_daily_priorities(
+    body: BulkDailyPriorityUpdate,
+    user: Annotated[User, Depends(require_technician)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[DailyPriorityResponse]:
+    """Bulk update daily priorities for the site.
+    Rule 1: No generator has the same priority number as another gen in the same site on any day.
+    Rule 2: The priority number cannot exceed the number of generators in the site (1 <= priority <= N).
+    """
+    stmt = scoped_select(Panel, user.site_id)
+    panels = (await session.execute(stmt)).scalars().all()
+    total_panels = len(panels)
+    panel_ids = {p.id for p in panels}
+
+    # Group priorities by day of week
+    by_day: dict[int, list[DailyPriorityItem]] = {}
+    for item in body.priorities:
+        if item.panel_id not in panel_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Generator ID '{item.panel_id}' does not belong to the current site.",
+            )
+        by_day.setdefault(item.day_of_week, []).append(item)
+
+    for day_of_week, items in by_day.items():
+        day_label = DAY_NAMES[day_of_week] if 0 <= day_of_week < 7 else f"Day {day_of_week}"
+        seen_priorities = set()
+        seen_panels = set()
+        for item in items:
+            if item.panel_id in seen_panels:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Generator configured multiple times on {day_label}.",
+                )
+            seen_panels.add(item.panel_id)
+
+            # Rule 2: Cannot exceed the number of generators in the site
+            if item.priority < 1 or item.priority > total_panels:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Priority {item.priority} on {day_label} exceeds the number of generators "
+                        f"in the site ({total_panels}). Allowed priorities are 1 to {total_panels}."
+                    ),
+                )
+            # Rule 1: No duplicate priorities in the same site
+            if item.priority in seen_priorities:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Duplicate priority {item.priority} on {day_label}. "
+                        "Every generator must have a unique priority number."
+                    ),
+                )
+            seen_priorities.add(item.priority)
+
+    # Delete existing priorities for this site
+    delete_stmt = select(DailyPriority).where(DailyPriority.site_id == user.site_id)
+    result = await session.execute(delete_stmt)
+    for p in result.scalars():
+        await session.delete(p)
+        
+    # Insert new priorities
+    new_priorities = []
+    for item in body.priorities:
+        dp = DailyPriority(
+            site_id=user.site_id,
+            panel_id=item.panel_id,
+            day_of_week=item.day_of_week,
+            priority=item.priority,
+        )
+        session.add(dp)
+        new_priorities.append(dp)
+        
+    await session.commit()
+    for dp in new_priorities:
+        await session.refresh(dp)
+        
+    return [DailyPriorityResponse.model_validate(p) for p in new_priorities]
 # ── Manual Command Dispatch ─────────────────────────────────────────────
 @router.post("/{panel_id}/start")
 async def manual_remote_start(

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 /**
  * Custom React hook for live WebSocket telemetry stream.
  */
-export function useWebSocketTelemetry() {
+export function useWebSocketTelemetry(refreshKey = 0) {
   const [panelStates, setPanelStates] = useState({});
   const [gatewayStatus, setGatewayStatus] = useState('connecting');
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -86,7 +86,7 @@ export function useWebSocketTelemetry() {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, []);
+  }, [refreshKey]);
 
   return { panelStates, gatewayStatus, lastUpdate };
 }

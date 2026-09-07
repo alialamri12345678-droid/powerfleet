@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     register_map_path: str = str(
         Path(__file__).resolve().parent.parent / "register_map.yaml"
     )
-    mock_modbus_enabled: bool = True
+    mock_modbus_enabled: bool = False
     mock_modbus_host: str = "127.0.0.1"
     mock_modbus_port: int = 5020
 
