@@ -1,4 +1,4 @@
-"""FastAPI dependencies for authentication, role enforcement, and service access."""
+"""FastAPI dependencies for authentication and service access."""
 
 from typing import Annotated, Any
 
@@ -51,13 +51,6 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return user
-
-
-async def require_technician(
-    user: Annotated[User, Depends(get_current_user)],
-) -> User:
-    """Ensure the requesting user has the 'technician' role."""
     return user
 
 

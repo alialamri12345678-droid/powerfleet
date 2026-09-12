@@ -47,99 +47,40 @@ rules_engine_instance: RulesEngine | None = None
 
 
 async def seed_initial_data():
-    """Seed a default site, panels, and initial user accounts if database is empty."""
+    """Create the first customer account and empty site using explicit credentials."""
     async with async_session_factory() as session:
-        # Check if site exists
-        site_res = await session.execute(select(Site))
-        site = site_res.scalars().first()
+        existing_user = (await session.execute(select(User).limit(1))).scalars().first()
+        if existing_user:
+            return
 
-        if not site:
-            logger.info("Database empty — seeding demo site, panels, and users...")
-            site = Site(
-                name="Main Facility - Building A",
-                address="100 Industrial Parkway, Sector 4",
-                timezone="UTC",
-                max_parallel_units=3,
+        if not (settings.bootstrap_admin_email and settings.bootstrap_admin_password):
+            raise RuntimeError(
+                "No customer account exists. Set BOOTSTRAP_ADMIN_EMAIL and "
+                "BOOTSTRAP_ADMIN_PASSWORD to initialize this installation."
             )
+
+        site = (await session.execute(select(Site).limit(1))).scalars().first()
+        if site is None:
+            site = Site(name="Main Facility", timezone="UTC", max_parallel_units=3)
             session.add(site)
             await session.flush()
-
-            # Seed Customer user (single unified view with full control)
-            customer = User(
-                email="customer@example.com",
-                password_hash=hash_password("customer123"),
-                full_name="Facility Manager",
-                role="technician",
-                site_id=site.id,
-            )
-            # Seed Technician user
-            technician = User(
-                email="tech@example.com",
-                password_hash=hash_password("tech123"),
-                full_name="Lead Power Engineer",
-                role="technician",
-                site_id=site.id,
-            )
-            session.add_all([customer, technician])
-
-            # Seed Panels corresponding to the mock Modbus server
-            p1 = Panel(
-                site_id=site.id,
-                name="Generator 1 (Base Load)",
-                transport_type="tcp",
-                address=f"{settings.mock_modbus_host}:{settings.mock_modbus_port}",
-                unit_id=1,
-                rated_kw=500.0,
-                rated_kvar=150.0,
-                priority=1,
-            )
-            p2 = Panel(
-                site_id=site.id,
-                name="Generator 2 (Secondary)",
-                transport_type="tcp",
-                address=f"{settings.mock_modbus_host}:{settings.mock_modbus_port}",
-                unit_id=2,
-                rated_kw=750.0,
-                rated_kvar=225.0,
-                priority=2,
-            )
-            p3 = Panel(
-                site_id=site.id,
-                name="Generator 3 (Standby)",
-                transport_type="tcp",
-                address=f"{settings.mock_modbus_host}:{settings.mock_modbus_port}",
-                unit_id=3,
-                rated_kw=500.0,
-                rated_kvar=150.0,
-                priority=3,
-            )
-            session.add_all([p1, p2, p3])
-            await session.flush()
-
-            # Seed default threshold
-            thresh = Threshold(
+            session.add(Threshold(
                 site_id=site.id,
                 panel_id=None,
                 start_pct=70.0,
                 stop_pct=50.0,
                 dwell_seconds=120,
-            )
-            session.add(thresh)
+            ))
 
-            # Seed initial schedule (Gen 1 on duty Mon-Fri)
-            for day in range(5):
-                sched = Schedule(
-                    site_id=site.id,
-                    panel_id=p1.id,
-                    day_of_week=day,
-                    start_time="07:00",
-                    end_time="19:00",
-                    is_active=True,
-                )
-                session.add(sched)
-
-            await session.commit()
-            logger.info("Seed complete. Credentials: customer@example.com / customer123, tech@example.com / tech123")
+        session.add(User(
+            email=settings.bootstrap_admin_email,
+            password_hash=hash_password(settings.bootstrap_admin_password),
+            full_name="Facility Manager",
+            role="customer",
+            site_id=site.id,
+        ))
+        await session.commit()
+        logger.info("Customer account created for %s", settings.bootstrap_admin_email)
 
 
 async def log_event_to_db(
@@ -435,6 +376,7 @@ async def lifespan(app: FastAPI):
                 transport_type=p.transport_type,
                 address=p.address,
                 unit_id=p.unit_id,
+                rated_kw=float(p.rated_kw),
             )
 
     # 4. Initialize Rules Engine
@@ -480,8 +422,8 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
-        title="DSE Generator Fleet Gateway",
-        description="Middleware gateway and load-management orchestration for DSE generator panels",
+        title="Generator Fleet Gateway",
+        description="Customer monitoring and supervisory control for generator panels",
         version="1.0.0",
         lifespan=lifespan,
     )

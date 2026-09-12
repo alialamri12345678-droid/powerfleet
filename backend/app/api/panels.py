@@ -4,7 +4,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
@@ -18,12 +18,14 @@ from app.api.schemas import (
 from app.auth.models import User
 from app.db.session import get_session
 from app.db.tenant import scoped_get, scoped_select
-from app.dependencies import get_current_user, get_gateway, get_rules_engine, require_technician
+from app.dependencies import get_current_user, get_gateway, get_rules_engine
 from app.models.panel import Panel
 from app.models.daily_priority import DailyPriority
 from app.models.release_threshold import ReleaseThreshold
 from app.models.start_threshold import StartThreshold
 from app.models.threshold import Threshold
+from app.models.schedule_exception import ScheduleException
+from app.models.event import Event
 from app.modbus.gateway import ModbusGateway
 from app.rules.engine import RulesEngine
 
@@ -63,7 +65,7 @@ DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 @router.post("", response_model=PanelResponse, status_code=status.HTTP_201_CREATED)
 async def create_panel(
     body: PanelCreate,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway, Depends(get_gateway)],
     rules_engine: Annotated[RulesEngine, Depends(get_rules_engine)],
@@ -133,6 +135,7 @@ async def create_panel(
             transport_type=panel.transport_type,
             address=panel.address,
             unit_id=panel.unit_id,
+            rated_kw=float(panel.rated_kw),
         )
 
     # Reload rules engine schedules so it knows about the new panel
@@ -150,11 +153,11 @@ async def create_panel(
 async def update_panel(
     panel_id: str,
     body: PanelUpdate,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
 ) -> PanelResponse:
-    """Update panel properties (technician only). Enforces unique priority <= N."""
+    """Update panel properties. Enforces unique priority <= N."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
     if panel is None:
         raise HTTPException(status_code=404, detail="Panel not found")
@@ -191,6 +194,7 @@ async def update_panel(
             transport_type=panel.transport_type,
             address=panel.address,
             unit_id=panel.unit_id,
+            rated_kw=float(panel.rated_kw),
         )
 
     return PanelResponse.model_validate(panel)
@@ -199,7 +203,7 @@ async def update_panel(
 @router.delete("/{panel_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_panel(
     panel_id: str,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
     rules_engine: Annotated[RulesEngine, Depends(get_rules_engine)],
@@ -209,21 +213,13 @@ async def delete_panel(
     if panel is None:
         raise HTTPException(status_code=404, detail="Panel not found")
 
-    # Unregister from live gateway poll loop
-    if gateway:
-        gateway.remove_panel(panel_id)
+    # Remove configuration without ORM cascade relationships as part of the
+    # same transaction. This also supports databases created by older versions.
+    for model in (StartThreshold, ReleaseThreshold, Threshold, DailyPriority, ScheduleException):
+        await session.execute(delete(model).where(model.panel_id == panel_id))
 
-    # Delete release thresholds for this panel
-    rt_stmt = select(ReleaseThreshold).where(ReleaseThreshold.panel_id == panel_id)
-    rt_result = await session.execute(rt_stmt)
-    for rt in rt_result.scalars():
-        await session.delete(rt)
-
-    # Delete daily priorities for this panel (SQLite doesn't enforce FK cascades)
-    dp_stmt = select(DailyPriority).where(DailyPriority.panel_id == panel_id)
-    dp_result = await session.execute(dp_stmt)
-    for dp in dp_result.scalars():
-        await session.delete(dp)
+    # Preserve historical audit entries after the generator is decommissioned.
+    await session.execute(update(Event).where(Event.panel_id == panel_id).values(panel_id=None))
 
     # Delete from database (cascades to schedules, setpoints via ORM relationships)
     await session.delete(panel)
@@ -235,13 +231,37 @@ async def delete_panel(
     for idx, p in enumerate(remaining, start=1):
         p.priority = idx
 
-    # Re-compact release threshold priority orders
-    rt_stmt2 = scoped_select(ReleaseThreshold, user.site_id).order_by(ReleaseThreshold.priority_order)
-    remaining_rts = (await session.execute(rt_stmt2)).scalars().all()
-    for idx, rt in enumerate(remaining_rts, start=1):
-        rt.priority_order = idx
+    # Both threshold pages must use the remaining generators' actual ranks.
+    ranks = {p.id: p.priority for p in remaining}
+    for model in (StartThreshold, ReleaseThreshold):
+        rows = (await session.execute(scoped_select(model, user.site_id))).scalars().all()
+        for row in rows:
+            if row.panel_id in ranks:
+                row.priority_order = ranks[row.panel_id]
+
+    # Preserve each day's chosen order, closing the gap left by the deleted unit.
+    daily_rows = (await session.execute(
+        scoped_select(DailyPriority, user.site_id).order_by(DailyPriority.priority, DailyPriority.panel_id)
+    )).scalars().all()
+    for day in range(7):
+        day_rows = {r.panel_id: r for r in daily_rows if r.day_of_week == day}
+        ordered_panels = sorted(remaining, key=lambda p: (
+            day_rows[p.id].priority if p.id in day_rows else p.priority, p.priority, p.id,
+        ))
+        for rank, remaining_panel in enumerate(ordered_panels, start=1):
+            row = day_rows.get(remaining_panel.id)
+            if row is None:
+                row = DailyPriority(site_id=user.site_id, panel_id=remaining_panel.id, day_of_week=day)
+                session.add(row)
+            row.priority = rank
 
     await session.commit()
+
+    # Change runtime state only once the database deletion succeeds.
+    if gateway:
+        gateway.remove_panel(panel_id)
+    if rules_engine:
+        rules_engine.remove_panel(panel_id)
 
     # Reload rules engine schedules
     try:
@@ -269,7 +289,7 @@ async def get_daily_priorities(
 @router.post("/priorities/daily/bulk", response_model=list[DailyPriorityResponse])
 async def update_daily_priorities(
     body: BulkDailyPriorityUpdate,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> list[DailyPriorityResponse]:
     """Bulk update daily priorities for the site.

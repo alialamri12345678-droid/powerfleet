@@ -87,20 +87,22 @@ export function Navbar({
         >
           Reports & Work Logs
         </button>
-        <button
-          type="button"
-          className={`nav-tab ${activeTab === 'diagnostics' ? 'active' : ''}`}
-          onClick={() => onSelectTab('diagnostics')}
-        >
-          Diagnostics
-        </button>
-        <button
-          type="button"
-          className={`nav-tab ${activeTab === 'overrides' ? 'active' : ''}`}
-          onClick={() => onSelectTab('overrides')}
-        >
-          Overrides
-        </button>
+        <>
+          <button
+            type="button"
+            className={`nav-tab ${activeTab === 'diagnostics' ? 'active' : ''}`}
+            onClick={() => onSelectTab('diagnostics')}
+          >
+            Diagnostics
+          </button>
+          <button
+            type="button"
+            className={`nav-tab ${activeTab === 'overrides' ? 'active' : ''}`}
+            onClick={() => onSelectTab('overrides')}
+          >
+            Overrides
+          </button>
+        </>
         <button
           type="button"
           className={`nav-tab ${activeTab === 'events' ? 'active' : ''}`}
@@ -111,9 +113,6 @@ export function Navbar({
       </nav>
 
       <div className="user-section">
-        <span className="role-tag customer">
-          Customer
-        </span>
         <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
           {user?.full_name || user?.email}
         </span>

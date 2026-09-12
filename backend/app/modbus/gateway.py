@@ -116,6 +116,7 @@ class ModbusGateway:
         """Remove a panel from the poll loop."""
         self._panel_configs.pop(panel_id, None)
         self._states.pop(panel_id, None)
+        self._cooldown.reset(panel_id)
         transport = self._transports.pop(panel_id, None)
         if transport:
             asyncio.create_task(transport.disconnect())
@@ -469,10 +470,9 @@ class ModbusGateway:
     async def _validate_safe_to_stop(self, panel_id: str, triggered_by: str = "manual") -> tuple[bool, str]:
         """Check that stopping this panel won't violate capacity/reserve.
         
-        Operator commands (manual, technician, override), schedule jobs, and dispatcher
-        orchestration bypass capacity checks because they reflect intentional control.
+        Only an explicit customer override may bypass the capacity check.
         """
-        if triggered_by in ("manual", "technician", "override", "schedule", "dispatcher"):
+        if triggered_by == "override":
             return True, "Safe to stop"
 
         state = self._states.get(panel_id)
@@ -495,7 +495,7 @@ class ModbusGateway:
             if s.site_id == site_id and s.is_running
         )
 
-        if remaining_capacity > 0 and remaining_capacity < current_site_load:
+        if remaining_capacity < current_site_load:
             return False, f"Stopping {panel_id} would exceed remaining capacity. Load: {current_site_load:.1f}kW, Remaining capacity: {remaining_capacity:.1f}kW"
 
         return True, "Safe to stop"
@@ -651,7 +651,7 @@ class ModbusGateway:
     # ── Diagnostics ───────────────────────────────────────────────────
 
     async def read_all_registers(self, panel_id: str) -> dict[str, Any]:
-        """Read all known registers for a panel (technician diagnostics).
+        """Read all known registers for a panel (customer diagnostics).
 
         Returns a dict of register_name → {address, raw_value, scaled_value, unit}.
         """

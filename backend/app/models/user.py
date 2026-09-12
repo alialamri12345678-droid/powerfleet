@@ -1,6 +1,6 @@
-"""User model — authentication and role-based access."""
+"""User model — authenticated customers with full installation access."""
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import CheckConstraint, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, generate_uuid
@@ -8,6 +8,7 @@ from app.models.base import Base, TimestampMixin, generate_uuid
 
 class User(Base, TimestampMixin):
     __tablename__ = "users"
+    __table_args__ = (CheckConstraint("role = 'customer'", name="ck_users_customer_role"),)
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=generate_uuid
@@ -22,13 +23,13 @@ class User(Base, TimestampMixin):
         String(200), nullable=False, default="",
     )
 
-    # Role: 'customer' or 'technician'
+    # A single customer role; every account has the same full controls.
     role: Mapped[str] = mapped_column(
         String(20), nullable=False, default="customer",
-        comment="customer | technician",
+        comment="customer",
     )
 
-    # Every user belongs to exactly one site
+    # Active site context within this customer's installation
     site_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("sites.id", ondelete="CASCADE"),
         index=True, nullable=False,

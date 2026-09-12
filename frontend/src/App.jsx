@@ -6,9 +6,9 @@ import { DashboardPage } from './pages/DashboardPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ReportsPage } from './pages/ReportsPage';
-import { TechDiagPage } from './pages/TechDiagPage';
-import { TechOverridePage } from './pages/TechOverridePage';
-import { TechEventLogPage } from './pages/TechEventLogPage';
+import { DiagnosticsPage } from './pages/DiagnosticsPage';
+import { OverridesPage } from './pages/OverridesPage';
+import { EventLogPage } from './pages/EventLogPage';
 import { AddSiteModal } from './components/AddSiteModal';
 import { AddGeneratorModal } from './components/AddGeneratorModal';
 import { useWebSocketTelemetry } from './api/ws';
@@ -63,10 +63,9 @@ function AppContent() {
     }
   };
 
-  const handleSiteCreated = (newSite) => {
+  const handleSiteCreated = async (newSite) => {
     setSites((prev) => [...prev, newSite]);
-    setCurrentSite(newSite);
-    setSiteRefreshKey((k) => k + 1);
+    await handleSelectSite(newSite.id);
   };
 
   const handleGeneratorCreated = () => {
@@ -102,7 +101,7 @@ function AppContent() {
         onOpenAddSite={() => setIsAddSiteOpen(true)}
       />
 
-      <main className="main-content">
+      <main className="main-content" key={currentSite?.id}>
         {activeTab === 'dashboard' && (
           <DashboardPage
             panelStates={panelStates}
@@ -119,9 +118,9 @@ function AppContent() {
         {activeTab === 'reports' && <ReportsPage />}
 
         {/* Diagnostics, overrides, and audit log tabs */}
-        {activeTab === 'diagnostics' && <TechDiagPage />}
-        {activeTab === 'overrides' && <TechOverridePage />}
-        {activeTab === 'events' && <TechEventLogPage />}
+        {activeTab === 'diagnostics' && <DiagnosticsPage />}
+        {activeTab === 'overrides' && <OverridesPage />}
+        {activeTab === 'events' && <EventLogPage />}
       </main>
 
       {/* Modals */}

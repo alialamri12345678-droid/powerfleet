@@ -22,11 +22,6 @@ export function LoginPage({ onLoginSuccess }) {
     }
   };
 
-  const handleQuickLogin = (demoEmail, demoPass) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-  };
-
   return (
     <div style={{
       minHeight: '100vh',
@@ -103,24 +98,6 @@ export function LoginPage({ onLoginSuccess }) {
             {submitting ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
-
-        <div style={{
-          marginTop: '2rem',
-          paddingTop: '1.5rem',
-          borderTop: '1px solid var(--border-subtle)',
-        }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
-            Quick demo sign-in:
-          </div>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{ width: '100%', fontSize: '0.8125rem', padding: '0.5rem' }}
-            onClick={() => handleQuickLogin('customer@test.com', 'customer123')}
-          >
-            Demo Sign-in (Customer)
-          </button>
-        </div>
       </div>
     </div>
   );

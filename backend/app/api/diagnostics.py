@@ -1,4 +1,4 @@
-"""Diagnostics API router (Technician only) — raw registers, connection health, and overrides."""
+"""Diagnostics API router — raw registers, connection health, and overrides."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
@@ -11,7 +11,7 @@ from app.api.schemas import OverrideRequest, OverrideResponse
 from app.auth.models import User
 from app.db.session import get_session
 from app.db.tenant import scoped_get, scoped_select
-from app.dependencies import get_current_user, get_gateway, require_technician
+from app.dependencies import get_current_user, get_gateway
 from app.models.override import Override
 from app.models.panel import Panel
 from app.modbus.gateway import ModbusGateway
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/diagnostics", tags=["Diagnostics"])
 @router.get("/panels/{panel_id}/raw")
 async def get_raw_registers(
     panel_id: str,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway, Depends(get_gateway)],
 ) -> dict[str, Any]:
@@ -45,7 +45,7 @@ async def get_raw_registers(
 @router.get("/panels/{panel_id}/health")
 async def get_panel_health(
     panel_id: str,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway, Depends(get_gateway)],
 ) -> dict[str, Any]:
@@ -95,11 +95,11 @@ async def list_active_overrides(
 async def create_override(
     panel_id: str,
     body: OverrideRequest,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway, Depends(get_gateway)],
 ) -> OverrideResponse:
-    """Force start or stop on a panel with mandatory expiration (technician only)."""
+    """Force start or stop on a panel with mandatory expiration."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
     if panel is None:
         raise HTTPException(status_code=404, detail="Panel not found")
@@ -123,7 +123,7 @@ async def create_override(
         created_by=user.id,
         expires_at=expires_at,
         is_active=True,
-        reason=body.reason or f"Manual override by technician {user.full_name or user.email}",
+        reason=body.reason or f"Manual override by customer {user.full_name or user.email}",
     )
     # Issue the commanded action to the gateway first
     success = True
@@ -132,14 +132,14 @@ async def create_override(
         success, msg = await gateway.send_remote_start(
             panel_id=panel_id,
             triggered_by="override",
-            reason=f"Technician override (expires in {body.duration_minutes}m): {override.reason}",
+            reason=f"Customer override (expires in {body.duration_minutes}m): {override.reason}",
             user_id=user.id,
         )
     elif body.override_type == "force_stop":
         success, msg = await gateway.send_remote_stop(
             panel_id=panel_id,
             triggered_by="override",
-            reason=f"Technician override (expires in {body.duration_minutes}m): {override.reason}",
+            reason=f"Customer override (expires in {body.duration_minutes}m): {override.reason}",
             user_id=user.id,
         )
 
@@ -158,10 +158,10 @@ async def create_override(
 @router.delete("/panels/{panel_id}/override")
 async def release_override(
     panel_id: str,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """Release active override on a panel (technician only)."""
+    """Release active override on a panel."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
     if panel is None:
         raise HTTPException(status_code=404, detail="Panel not found")

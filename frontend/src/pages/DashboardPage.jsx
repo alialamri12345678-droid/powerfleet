@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { apiRequest } from '../api/client';
-import { useAuth } from '../auth/AuthContext';
 import { GeneratorCard } from '../components/GeneratorCard';
 import { OverrideBanner } from '../components/OverrideBanner';
 
@@ -14,7 +13,6 @@ export function DashboardPage({
   onEditPanel,
   refreshKey,
 }) {
-  const { user } = useAuth();
   const [panels, setPanels] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [overrides, setOverrides] = useState([]);
@@ -199,7 +197,6 @@ export function DashboardPage({
                 onManualStop={handleManualStop}
                 onEditPanel={onEditPanel}
                 onDeletePanel={handleDeleteGenerator}
-                isTechnician={true}
               />
             );
           })}

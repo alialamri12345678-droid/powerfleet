@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-scada}
       POSTGRES_USER: ${POSTGRES_USER:-scada_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_this_secure_password}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -27,11 +27,12 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scada_user}:${POSTGRES_PASSWORD:-change_this_secure_password}@db:5432/${POSTGRES_DB:-scada}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change_this_jwt_secret_in_production}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scada_user}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-scada}
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}"
       JWT_ALGORITHM: HS256
       MODBUS_POLL_INTERVAL_MS: ${MODBUS_POLL_INTERVAL_MS:-1000}
-      MOCK_MODBUS_ENABLED: ${MOCK_MODBUS_ENABLED:-true}
+      BOOTSTRAP_ADMIN_EMAIL: "${BOOTSTRAP_ADMIN_EMAIL:-}"
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"
       COMMAND_MIN_RUN_SECONDS: 30
       COMMAND_MIN_REST_SECONDS: 60
     ports:

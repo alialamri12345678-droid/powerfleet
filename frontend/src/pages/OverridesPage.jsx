@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { apiRequest } from '../api/client';
 
-export function TechOverridePage() {
+export function OverridesPage() {
   const [panels, setPanels] = useState([]);
   const [overrides, setOverrides] = useState([]);
   const [selectedPanelId, setSelectedPanelId] = useState('');

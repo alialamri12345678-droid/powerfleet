@@ -1,4 +1,4 @@
-"""Override model — technician manual overrides with mandatory expiry."""
+"""Override model — customer manual overrides with mandatory expiry."""
 
 from datetime import datetime, timezone
 
@@ -46,7 +46,7 @@ class Override(Base, TenantMixin, TimestampMixin):
 
     reason: Mapped[str | None] = mapped_column(
         Text, nullable=True,
-        comment="Optional note from the technician",
+        comment="Optional note from the customer",
     )
 
     # Relationships

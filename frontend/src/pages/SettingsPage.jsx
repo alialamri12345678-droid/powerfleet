@@ -310,8 +310,8 @@ export function SettingsPage() {
                 <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>Facility Site Details</h2>
                 <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Manage the core details for this installation.</p>
               </div>
-              <button 
-                type="button" 
+              <button
+                type="button"
                 className="btn btn-secondary"
                 onClick={() => setIsEditSiteOpen(true)}
               >
@@ -579,8 +579,8 @@ export function SettingsPage() {
           <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
             Deleting a site will permanently erase all its generators, schedules, and historical data.
           </p>
-          <button 
-            type="button" 
+          <button
+            type="button"
             className="btn btn-danger"
             onClick={handleDeleteSite}
           >

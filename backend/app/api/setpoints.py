@@ -1,4 +1,4 @@
-"""Power Setpoints API router (Technician only)."""
+"""Power Setpoints API router."""
 
 from typing import Annotated
 
@@ -10,7 +10,7 @@ from app.api.schemas import PowerSetpointCreate, PowerSetpointResponse
 from app.auth.models import User
 from app.db.session import get_session
 from app.db.tenant import scoped_get, scoped_select
-from app.dependencies import get_gateway, require_technician
+from app.dependencies import get_gateway, get_current_user
 from app.models.panel import Panel
 from app.models.power_setpoint import PowerSetpoint
 from app.modbus.gateway import ModbusGateway
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/setpoints", tags=["Power Setpoints"])
 @router.get("/{panel_id}", response_model=PowerSetpointResponse)
 async def get_setpoint(
     panel_id: str,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PowerSetpointResponse:
     """Get active fixed-power setpoint for a panel."""
@@ -54,11 +54,11 @@ async def get_setpoint(
 async def update_setpoint(
     panel_id: str,
     body: PowerSetpointCreate,
-    user: Annotated[User, Depends(require_technician)],
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway, Depends(get_gateway)],
 ) -> PowerSetpointResponse:
-    """Set fixed-power / base-load target (technician only). Writes to Modbus register."""
+    """Set fixed-power / base-load target. Writes to Modbus register."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
     if panel is None:
         raise HTTPException(status_code=404, detail="Panel not found")
@@ -92,7 +92,7 @@ async def update_setpoint(
             panel_id=panel_id,
             kw_pct=int(sp.target_kw_pct),
             triggered_by="manual",
-            reason=f"Technician setpoint write by {user.full_name or user.email}",
+            reason=f"Customer setpoint write by {user.full_name or user.email}",
             user_id=user.id,
         )
         if not success:

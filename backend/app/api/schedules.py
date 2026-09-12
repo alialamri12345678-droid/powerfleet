@@ -182,6 +182,7 @@ async def create_schedule_exception(
     body: ScheduleExceptionCreate,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    rules_engine: Annotated[RulesEngine | None, Depends(get_rules_engine)],
 ) -> ScheduleExceptionResponse:
     # Verify panel
     p = await session.get(Panel, body.panel_id)
@@ -202,6 +203,11 @@ async def create_schedule_exception(
     session.add(exc)
     await session.commit()
     await session.refresh(exc)
+
+    if rules_engine:
+        from app.main import rules_get_schedules
+
+        await rules_engine.load_schedules(await rules_get_schedules())
     return ScheduleExceptionResponse.model_validate(exc)
 
 
@@ -210,6 +216,7 @@ async def delete_schedule_exception(
     exception_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    rules_engine: Annotated[RulesEngine | None, Depends(get_rules_engine)],
 ):
     stmt = scoped_select(ScheduleException, user.site_id).where(ScheduleException.id == exception_id)
     res = await session.execute(stmt)
@@ -219,4 +226,9 @@ async def delete_schedule_exception(
         
     await session.delete(exc)
     await session.commit()
+
+    if rules_engine:
+        from app.main import rules_get_schedules
+
+        await rules_engine.load_schedules(await rules_get_schedules())
     return {"status": "success"}

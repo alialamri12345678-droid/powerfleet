@@ -95,7 +95,9 @@ async def get_release_thresholds(
     panels = panels_result.scalars().all()
 
     # Get existing release thresholds
-    rt_stmt = scoped_select(ReleaseThreshold, user.site_id)
+    rt_stmt = scoped_select(ReleaseThreshold, user.site_id).where(
+        ReleaseThreshold.panel_id.in_([p.id for p in panels])
+    )
     rt_result = await session.execute(rt_stmt)
     existing_rts = {rt.panel_id: rt for rt in rt_result.scalars().all()}
 
@@ -222,7 +224,9 @@ async def get_start_thresholds(
     panels = panels_result.scalars().all()
 
     # Get existing start thresholds
-    st_stmt = scoped_select(StartThreshold, user.site_id)
+    st_stmt = scoped_select(StartThreshold, user.site_id).where(
+        StartThreshold.panel_id.in_([p.id for p in panels])
+    )
     st_result = await session.execute(st_stmt)
     existing_sts = {st.panel_id: st for st in st_result.scalars().all()}
 

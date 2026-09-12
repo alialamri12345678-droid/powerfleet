@@ -4,8 +4,8 @@ import { apiRequest } from '../api/client';
 export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId, initialData = null }) {
   const [name, setName] = useState('');
   const [transportType, setTransportType] = useState('tcp');
-  const [address, setAddress] = useState('127.0.0.1:5020');
-  const [unitId, setUnitId] = useState('4');
+  const [address, setAddress] = useState('');
+  const [unitId, setUnitId] = useState('1');
   const [ratedKw, setRatedKw] = useState('500');
   const [ratedKvar, setRatedKvar] = useState('150');
   const [submitting, setSubmitting] = useState(false);
@@ -23,8 +23,8 @@ export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId,
       } else {
         setName('');
         setTransportType('tcp');
-        setAddress('127.0.0.1:5020');
-        setUnitId('4');
+        setAddress('');
+        setUnitId('1');
         setRatedKw('500');
         setRatedKvar('150');
       }
@@ -116,7 +116,7 @@ export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId,
               className="form-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Generator 4 (Standby Aux)"
+              placeholder="e.g. Generator 1"
               required
             />
           </div>
@@ -130,11 +130,7 @@ export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId,
                 value={transportType}
                 onChange={(e) => {
                   setTransportType(e.target.value);
-                  if (e.target.value === 'rtu' && address === '127.0.0.1:5020') {
-                    setAddress('/dev/ttyUSB0');
-                  } else if (e.target.value === 'tcp' && address === '/dev/ttyUSB0') {
-                    setAddress('127.0.0.1:5020');
-                  }
+                  setAddress('');
                 }}
               >
                 <option value="tcp">Modbus TCP (Ethernet)</option>
@@ -167,7 +163,7 @@ export function AddGeneratorModal({ isOpen, onClose, onGeneratorCreated, siteId,
               className="form-input"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
-              placeholder={transportType === 'tcp' ? '127.0.0.1:5020' : '/dev/ttyUSB0 or COM3'}
+              placeholder={transportType === 'tcp' ? '192.168.1.100:502' : '/dev/ttyUSB0 or COM3'}
               required
             />
           </div>

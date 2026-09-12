@@ -142,8 +142,7 @@ body {
   border-radius: 4px;
 }
 
-.role-tag.technician,
-.role-tag.customer {
+.role-tag {
   color: #0F6E63;
   background-color: var(--accent-teal-subtle);
 }

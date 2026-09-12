@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { apiRequest } from '../api/client';
 
-export function TechDiagPage() {
+export function DiagnosticsPage() {
   const [panels, setPanels] = useState([]);
   const [selectedPanelId, setSelectedPanelId] = useState(null);
   const [diagData, setDiagData] = useState(null);

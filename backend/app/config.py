@@ -26,9 +26,10 @@ class Settings(BaseSettings):
     register_map_path: str = str(
         Path(__file__).resolve().parent.parent / "register_map.yaml"
     )
-    mock_modbus_enabled: bool = False
-    mock_modbus_host: str = "127.0.0.1"
-    mock_modbus_port: int = 5020
+
+    # Initial customer credentials; no generators or simulation data are seeded.
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: str | None = None
 
     # ── Command Cooldowns ─────────────────────────────────────────────
     command_min_run_seconds: int = 30
@@ -47,8 +48,25 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]
     
     def model_post_init(self, __context: Any) -> None:
-        if not self.debug and self.jwt_secret_key == "CHANGE-ME-in-production":
-            raise ValueError("Insecure JWT secret in production mode. Set JWT_SECRET_KEY.")
+        insecure_secrets = {
+            "CHANGE-ME-in-production",
+            "change_this_jwt_secret_in_production",
+            "generate_a_random_32_byte_hex_secret",
+        }
+        if not self.debug and (
+            self.jwt_secret_key in insecure_secrets or len(self.jwt_secret_key) < 32
+        ):
+            raise ValueError(
+                "Insecure JWT secret in production mode. Set JWT_SECRET_KEY to at least 32 random characters."
+            )
+
+        bootstrap_values = (self.bootstrap_admin_email, self.bootstrap_admin_password)
+        if any(bootstrap_values) and not all(bootstrap_values):
+            raise ValueError(
+                "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set together."
+            )
+        if self.bootstrap_admin_password and len(self.bootstrap_admin_password) < 12:
+            raise ValueError("BOOTSTRAP_ADMIN_PASSWORD must be at least 12 characters.")
 
 
 settings = Settings()

@@ -96,16 +96,48 @@ class RulesEngine:
                 if state and state.is_running:
                     self._threshold_started[pid] = started_at
                     self._threshold_wants[pid] = "RUNNING"
+
+        self._adopt_unmanaged_running_panels()
             
         self._scheduler.start()
         # Register threshold checker on every gateway poll
         self._gateway.on_state_update(self._on_panel_state_update)
         logger.info("Rules engine started, reconstructed %d threshold-started panels", len(self._threshold_started))
 
+    def _adopt_unmanaged_running_panels(self) -> None:
+        """Bring running, unscheduled units under threshold release control.
+
+        This covers restarts and generator records recreated while the physical
+        controller remains on. The dwell period begins now, so startup never
+        causes an immediate stop. A persistent manual run should use an override.
+        """
+        now = datetime.now(timezone.utc)
+        for panel_id, state in self._gateway.states.items():
+            if not state.is_running or panel_id in self._threshold_started:
+                continue
+            if self._schedule_wants.get(panel_id) == "RUNNING":
+                continue
+            if self._fault_wants.get(panel_id) == "RUNNING":
+                continue
+            self._threshold_started[panel_id] = now
+            self._threshold_wants[panel_id] = "RUNNING"
+            logger.info(
+                "Adopted running unscheduled panel %s for threshold release after dwell",
+                panel_id,
+            )
+
     async def stop(self) -> None:
         """Shut down the scheduler gracefully."""
         self._scheduler.shutdown(wait=False)
         logger.info("Rules engine stopped")
+
+    def remove_panel(self, panel_id: str) -> None:
+        """Forget all cached control intents for a decommissioned generator."""
+        for state in (
+            self._schedule_wants, self._threshold_started, self._threshold_wants,
+            self._fault_started, self._fault_wants,
+        ):
+            state.pop(panel_id, None)
 
     # ── Dispatch Orchestration ────────────────────────────────────────
 
@@ -601,9 +633,8 @@ class RulesEngine:
 
                 if total_facility_load_pct <= release_pct:
                     self._threshold_wants[panel_id] = "STOPPED"
-                    del self._threshold_started[panel_id]
                     logger.info(
-                        "Threshold rule [site %s]: releasing backup %s (total facility load %.1f%% <= release %.1f%%)",
+                        "Threshold rule [site %s]: requesting release of backup %s (total facility load %.1f%% <= release %.1f%%)",
                         site_id[:8], panel_id, total_facility_load_pct, release_pct
                     )
 

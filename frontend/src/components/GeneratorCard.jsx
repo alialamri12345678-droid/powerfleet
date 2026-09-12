@@ -13,7 +13,6 @@ export function GeneratorCard({
   onManualStop,
   onEditPanel,
   onDeletePanel,
-  isTechnician = false,
 }) {
   const isRunning = liveState?.engine_status === 'running';
   const displayStatus = liveState?.display_status || (isRunning ? 'Running' : 'Idle');

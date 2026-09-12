@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { apiRequest } from '../api/client';
 
-export function TechEventLogPage() {
+export function EventLogPage() {
   const [events, setEvents] = useState([]);
   const [panels, setPanels] = useState([]);
   const [filterPanel, setFilterPanel] = useState('');
