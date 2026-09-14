@@ -1,0 +1,28 @@
+{
+  "name": "Test Power Station",
+  "simulation_speed": 1,
+  "paused": false,
+  "generators": [
+    {
+      "name": "GEN1",
+      "run_hours": 0.0014817436111111107,
+      "energy_kwh": 0.0,
+      "starts": 1,
+      "fuel_used_l": 0.0
+    },
+    {
+      "name": "GEN2",
+      "run_hours": 0.001418169722222222,
+      "energy_kwh": 0.0,
+      "starts": 1,
+      "fuel_used_l": 0.0
+    },
+    {
+      "name": "GEN3",
+      "run_hours": 0.0,
+      "energy_kwh": 0.0,
+      "starts": 0,
+      "fuel_used_l": 0.0
+    }
+  ]
+}

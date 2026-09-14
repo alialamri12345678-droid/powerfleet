@@ -1,0 +1,52 @@
+{
+  "catalog_version": 1,
+  "kind": "controller",
+  "defaults": {
+    "gencomm_version": 1,
+    "role": "genset_controller",
+    "supported_features": ["engine_monitoring", "generator_instrumentation", "alarms", "modbus_rtu"],
+    "supported_pages": [0,1,3,4,5,6,7,8,11,12,13,14,16,17,18,20,24],
+    "read_only_registers": [9,1024,1025,1029,1030,1031],
+    "writable_registers": [4104,4105],
+    "communications": {"tcp":{"supported":true,"default_port":502},"rs485":{"supported":true,"baud_rates":[1200,2400,4800,9600,19200,38400,57600,115200],"data_bits":8,"parity":"configurable","stop_bits":1}},
+    "metadata": {
+      "source": "Deep Sea Electronics product pages and user-supplied GenComm document",
+      "source_document": "GenComm.docx",
+      "source_url": "https://www.deepseaelectronics.com/genset",
+      "datasheet_revision": null,
+      "notes": "Role and headline feature class follow DSE product descriptions. The common emulator register-page declaration is a simulator compatibility map and must be checked against the exact module firmware/GenComm document before acceptance testing. It is not a protection-setting specification."
+    }
+  },
+  "profiles": [
+    {"profile_id":"dseg8900","model":"DSEG8900","family":"DSEG8xxx","role":"parallel_genset_controller","supported_features":["synchronization","load_sharing","engine_monitoring","generator_instrumentation","alarms","modbus_tcp","modbus_rtu"]},
+    {"profile_id":"dseg8680","model":"DSEG8680","family":"DSEG8xxx","role":"bus_tie_controller","supported_features":["synchronization","bus_tie","alarms","modbus_tcp","modbus_rtu"]},
+    {"profile_id":"dseg8660","model":"DSEG8660","family":"DSEG8xxx","role":"mains_controller","supported_features":["grid_synchronization","ats","peak_shaving","alarms","modbus_tcp","modbus_rtu"]},
+    {"profile_id":"dseg8600","model":"DSEG8600","family":"DSEG8xxx","role":"parallel_genset_controller","supported_features":["synchronization","load_sharing","engine_monitoring","generator_instrumentation","alarms","modbus_tcp","modbus_rtu"]},
+    {"profile_id":"dse8680","model":"DSE8680","family":"DSE86xx","role":"bus_tie_controller","supported_features":["synchronization","bus_tie","alarms","modbus_tcp","modbus_rtu"]},
+    {"profile_id":"dse8660_mkii","model":"DSE8660 MKII","family":"DSE86xxMKII","role":"mains_controller","supported_features":["grid_synchronization","ats","peak_shaving","alarms","modbus_tcp","modbus_rtu"]},
+    {"profile_id":"dse8620_mkii","model":"DSE8620 MKII","family":"DSE86xxMKII","role":"mains_parallel_genset_controller","supported_features":["grid_synchronization","synchronization","load_sharing","peak_shaving","alarms","modbus_tcp","modbus_rtu"]},
+    {"profile_id":"dse8610_mkii","model":"DSE8610 MKII","family":"DSE86xxMKII","role":"parallel_genset_controller","supported_features":["synchronization","load_sharing","engine_monitoring","generator_instrumentation","alarms","modbus_tcp","modbus_rtu"],"metadata":{"source_url":"https://www.deepseaelectronics.com/genset/load-sharing-synchronising-control-modules/dse8610-mkii"}},
+    {"profile_id":"dse7420_mkii","model":"DSE7420 MKII","family":"DSE74xxMKII","role":"amf_genset_controller"},
+    {"profile_id":"dse7410_mkii","model":"DSE7410 MKII","family":"DSE74xxMKII","role":"auto_start_genset_controller"},
+    {"profile_id":"dse7320_mkii","model":"DSE7320 MKII","family":"DSE73xxMKII","role":"amf_genset_controller"},
+    {"profile_id":"dse7310_mkii","model":"DSE7310 MKII","family":"DSE73xxMKII","role":"auto_start_genset_controller"},
+    {"profile_id":"dse6120_mkiii","model":"DSE6120 MKIII","family":"DSE6xxx","role":"amf_genset_controller"},
+    {"profile_id":"dse6110_mkiii","model":"DSE6110 MKIII","family":"DSE6xxx","role":"auto_start_genset_controller"},
+    {"profile_id":"dse4520_mkii","model":"DSE4520 MKII","family":"DSE4xxx","role":"amf_genset_controller"},
+    {"profile_id":"dse4510_mkii","model":"DSE4510 MKII","family":"DSE4xxx","role":"auto_start_genset_controller"},
+    {"profile_id":"dse3110","model":"DSE3110","family":"DSE3xxx","role":"manual_auto_start_genset_controller"},
+    {"profile_id":"dse335_mkii","model":"DSE335 MKII","family":"DSE3xxx","role":"ats_controller","supported_features":["ats","mains_monitoring","alarms","modbus_rtu"]},
+    {"profile_id":"dsee800","model":"DSEE800","family":"DSEE8xx","role":"engine_controller","supported_features":["engine_monitoring","alarms","canbus","modbus_rtu"]},
+    {"profile_id":"dse8810","model":"DSE8810","family":"DSE8xxx","role":"parallel_genset_controller","supported_features":["synchronization","load_sharing","engine_monitoring","generator_instrumentation","alarms","modbus_tcp","modbus_rtu"]},
+    {"profile_id":"dse8860","model":"DSE8860","family":"DSE8xxx","role":"mains_controller","supported_features":["grid_synchronization","ats","peak_shaving","alarms","modbus_tcp","modbus_rtu"]},
+    {"profile_id":"dse7560","model":"DSE7560","family":"DSE75xx","role":"mains_parallel_genset_controller","supported_features":["grid_synchronization","synchronization","load_sharing","alarms","modbus_rtu"]},
+    {"profile_id":"dse7520","model":"DSE7520","family":"DSE75xx","role":"mains_parallel_genset_controller","supported_features":["grid_synchronization","synchronization","load_sharing","alarms","modbus_rtu"]},
+    {"profile_id":"dse7510","model":"DSE7510","family":"DSE75xx","role":"parallel_genset_controller","supported_features":["synchronization","load_sharing","alarms","modbus_rtu"]},
+    {"profile_id":"dse7220","model":"DSE7220","family":"DSE72xx","role":"amf_genset_controller"},
+    {"profile_id":"dse7210","model":"DSE7210","family":"DSE72xx","role":"auto_start_genset_controller"},
+    {"profile_id":"dse7120","model":"DSE7120","family":"DSE71xx","role":"amf_genset_controller"},
+    {"profile_id":"dse7110","model":"DSE7110","family":"DSE71xx","role":"auto_start_genset_controller"},
+    {"profile_id":"dse6020","model":"DSE6020","family":"DSE6xxx","role":"amf_genset_controller"},
+    {"profile_id":"dse6010","model":"DSE6010","family":"DSE6xxx","role":"auto_start_genset_controller"}
+  ]
+}

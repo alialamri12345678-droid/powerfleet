@@ -1,0 +1,57 @@
+{
+  "catalog_version": 1,
+  "kind": "generator",
+  "defaults": {
+    "model": {"value": "Adjustable diesel genset template", "classification": "simulation_parameter"},
+    "engine_manufacturer": {"value": null, "classification": "unknown"},
+    "engine_model": {"value": null, "classification": "unknown"},
+    "alternator_manufacturer": {"value": null, "classification": "unknown"},
+    "alternator_model": {"value": null, "classification": "unknown"},
+    "prime_power_kw": {"value": 500, "classification": "simulation_parameter"},
+    "standby_power_kw": {"value": null, "classification": "unknown"},
+    "rated_kva": {"value": 625, "classification": "simulation_parameter"},
+    "rated_voltage_v": {"value": 400, "classification": "simulation_parameter"},
+    "rated_frequency_hz": {"value": 50, "classification": "simulation_parameter"},
+    "rated_current_a": {"value": 902.1, "classification": "simulation_parameter"},
+    "rated_power_factor": {"value": 0.8, "classification": "simulation_parameter"},
+    "rated_rpm": {"value": 1500, "classification": "simulation_parameter"},
+    "phases": {"value": 3, "classification": "simulation_parameter"},
+    "fuel_type": {"value": "diesel", "classification": "simulation_parameter"},
+    "parameters": {
+      "displacement_l": {"value": null, "classification": "unknown"},
+      "cylinder_count": {"value": null, "classification": "unknown"},
+      "governor_type": {"value": null, "classification": "unknown"},
+      "avr_type": {"value": null, "classification": "unknown"},
+      "minimum_recommended_loading_pct": {"value": 30, "classification": "simulation_parameter"},
+      "maximum_loading_pct": {"value": 100, "classification": "simulation_parameter"},
+      "start_delay_s": {"value": 2, "classification": "simulation_parameter"},
+      "crank_duration_s": {"value": 3, "classification": "simulation_parameter"},
+      "warm_up_s": {"value": 5, "classification": "simulation_parameter"},
+      "cool_down_s": {"value": 5, "classification": "simulation_parameter"},
+      "ramp_up_kw_per_s": {"value": 50, "classification": "simulation_parameter"},
+      "ramp_down_kw_per_s": {"value": 75, "classification": "simulation_parameter"},
+      "fuel_consumption_lph_25": {"value": null, "classification": "unknown"},
+      "fuel_consumption_lph_50": {"value": null, "classification": "unknown"},
+      "fuel_consumption_lph_75": {"value": null, "classification": "unknown"},
+      "fuel_consumption_lph_100": {"value": null, "classification": "unknown"}
+    },
+    "metadata": {
+      "source": "Official manufacturer product portfolio",
+      "source_document": null,
+      "datasheet_revision": null,
+      "notes": "Manufacturer identity is sourced. Ratings and dynamics are adjustable simulation parameters, not manufacturer specifications. Select a size override and replace unknown fields with a verified model datasheet before model-specific testing."
+    }
+  },
+  "profiles": [
+    {"profile_id":"caterpillar_adjustable","manufacturer":{"value":"Caterpillar","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.cat.com/en_US/products/new/power-systems/electric-power/"}},
+    {"profile_id":"cummins_adjustable","manufacturer":{"value":"Cummins","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.cummins.com/en-na/generators/diesel"}},
+    {"profile_id":"mtu_adjustable","manufacturer":{"value":"mtu / Rolls-Royce Power Systems","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.mtu-solutions.com/na/en/applications/power-generation/power-generation-products/diesel-generator-sets.html"}},
+    {"profile_id":"rehlko_adjustable","manufacturer":{"value":"Rehlko","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.powersystems.rehlko.com/products/Diesel%2BGenerators"}},
+    {"profile_id":"generac_adjustable","manufacturer":{"value":"Generac","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.generac.com/industrial-products/stationary-generators/?FuelType=Diesel"}},
+    {"profile_id":"fg_wilson_adjustable","manufacturer":{"value":"FG Wilson","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.fgwilson.com/en_GB/products.index.html"}},
+    {"profile_id":"perkins_adjustable","manufacturer":{"value":"Perkins-powered","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.perkins.com/en_GB/products/sectors/electric-power.html","notes":"Perkins is principally represented here as a power-generation engine supplier. The alternator and set assembler remain unknown."}},
+    {"profile_id":"volvo_penta_adjustable","manufacturer":{"value":"Volvo Penta-powered","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.volvopenta.com/industrial/power-generation-engines/","notes":"Volvo Penta is represented here as a power-generation engine supplier. The alternator and set assembler remain unknown."}},
+    {"profile_id":"mitsubishi_adjustable","manufacturer":{"value":"Mitsubishi Heavy Industries","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.mhi.com/group/mhiesa/products/diesel-generator-sets"}},
+    {"profile_id":"yanmar_adjustable","manufacturer":{"value":"Yanmar","classification":"manufacturer_spec"},"metadata":{"source_url":"https://www.yanmar.com/eu/energy/products/power_generator/"}}
+  ]
+}

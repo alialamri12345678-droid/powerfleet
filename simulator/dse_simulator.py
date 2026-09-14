@@ -28,6 +28,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
 
+from simulator_core.electrical import calculate_three_phase
+
 # ── Modbus imports ──────────────────────────────────────────────────
 from pymodbus.datastore import (
     ModbusSequentialDataBlock,
@@ -109,6 +111,8 @@ class SimulatedGenerator:
         self.load_kw = 0.0
         self.load_kw_percent = 0.0
         self.load_kvar = 0.0
+        self.current = 0.0
+        self.power_factor = 0.8
         self.frequency = 0.0
         self.voltage = 0.0
         self.coolant_temp = 25.0
@@ -176,7 +180,9 @@ class SimulatedGenerator:
                 self.load_kw_percent = max(0, min(100, base_load + noise))
 
             self.load_kw = self.rated_kw * self.load_kw_percent / 100
-            self.load_kvar = self.load_kw * 0.3 + random.uniform(-5, 5)
+            electrical = calculate_three_phase(self.load_kw, self.voltage, self.power_factor)
+            self.load_kvar = electrical.reactive_power_kvar
+            self.current = electrical.current_a
 
             # Engine health
             self.coolant_temp = min(95, self.coolant_temp + dt * 0.5) + random.uniform(-0.5, 0.5)
@@ -192,6 +198,7 @@ class SimulatedGenerator:
             self.load_kw = 0
             self.load_kw_percent = 0
             self.load_kvar = 0
+            self.current = 0
             self.coolant_temp = max(25, self.coolant_temp - dt * 2)
             if time_in_state > 5.0:
                 self._transition(STATUS_STOPPED)
@@ -203,6 +210,7 @@ class SimulatedGenerator:
             self.load_kw = 0
             self.load_kw_percent = 0
             self.load_kvar = 0
+            self.current = 0
             self.oil_pressure = 0
             self.coolant_temp = max(25, self.coolant_temp - dt * 0.5)
 
@@ -210,6 +218,8 @@ class SimulatedGenerator:
             self.engine_speed = 0
             self.load_kw = 0
             self.load_kw_percent = 0
+            self.load_kvar = 0
+            self.current = 0
 
         # Clear timed alarms
         if self._fault_timer and now > self._fault_timer:
@@ -600,7 +610,7 @@ class SimulatorGUI:
             total_rated_kw = sum(g.rated_kw for g in self.generators.values())
             target_total_kw = total_rated_kw * (fac_load_pct / 100.0)
             
-            running_gens = [g for g in self.generators.values() if g.engine_status in (4, 5)] # RUNNING or COOLDOWN
+            running_gens = [g for g in self.generators.values() if g.engine_status == STATUS_RUNNING]
             
             if running_gens:
                 # Distribute evenly across running gens
@@ -610,7 +620,7 @@ class SimulatorGUI:
                     gen.manual_load_percent = min(110, int(pct)) # cap at 110%
                     
             # Idle gens get 0 load
-            idle_gens = [g for g in self.generators.values() if g.engine_status not in (4, 5)]
+            idle_gens = [g for g in self.generators.values() if g.engine_status != STATUS_RUNNING]
             for gen in idle_gens:
                 gen.manual_load_percent = 0
 

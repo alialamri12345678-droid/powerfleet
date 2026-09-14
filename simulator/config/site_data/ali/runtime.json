@@ -1,0 +1,45 @@
+{
+  "name": "ali",
+  "simulation_speed": 1,
+  "paused": false,
+  "generators": [
+    {
+      "name": "GEN1",
+      "run_hours": 0.9541778222222222,
+      "energy_kwh": 278.21739217423533,
+      "starts": 5,
+      "fuel_used_l": 0.0,
+      "load_mode": "fixed_kw",
+      "fixed_kw_setpoint": 290.0,
+      "telemetry_overrides": {
+        "fuel_level_pct": 90.0,
+        "fuel_used_l": 10.0,
+        "generator_state": 2,
+        "reactive_load_pct": 50.0,
+        "control_mode": 2.0,
+        "controller_status": 1.0,
+        "start_count": 2.0
+      }
+    },
+    {
+      "name": "GEN2",
+      "run_hours": 0.8178597877777808,
+      "energy_kwh": 159.0349511242459,
+      "starts": 4,
+      "fuel_used_l": 0.0,
+      "load_mode": "fixed_kw",
+      "fixed_kw_setpoint": 175.0,
+      "telemetry_overrides": {}
+    },
+    {
+      "name": "GEN3",
+      "run_hours": 0.7847981741666686,
+      "energy_kwh": 12.94117651402235,
+      "starts": 3,
+      "fuel_used_l": 0.0,
+      "load_mode": "fixed_kw",
+      "fixed_kw_setpoint": 285.0,
+      "telemetry_overrides": {}
+    }
+  ]
+}

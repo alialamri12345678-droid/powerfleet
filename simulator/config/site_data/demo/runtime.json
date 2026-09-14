@@ -1,0 +1,6 @@
+{
+  "name": "Test Power Station",
+  "simulation_speed": 1,
+  "paused": false,
+  "generators": []
+}

@@ -1,0 +1,21 @@
+{
+  "profile_id": "demo_750kw_60hz",
+  "manufacturer": {"value": "DEMO", "classification": "simulation_parameter"},
+  "model": {"value": "Generic 750 kW 60 Hz", "classification": "simulation_parameter"},
+  "engine_manufacturer": {"value": null, "classification": "unknown"},
+  "engine_model": {"value": null, "classification": "unknown"},
+  "alternator_manufacturer": {"value": null, "classification": "unknown"},
+  "alternator_model": {"value": null, "classification": "unknown"},
+  "prime_power_kw": {"value": 750, "classification": "simulation_parameter"},
+  "standby_power_kw": {"value": null, "classification": "unknown"},
+  "rated_kva": {"value": 937.5, "classification": "simulation_parameter"},
+  "rated_voltage_v": {"value": 480, "classification": "simulation_parameter"},
+  "rated_frequency_hz": {"value": 60, "classification": "simulation_parameter"},
+  "rated_current_a": {"value": 1127.6, "classification": "simulation_parameter"},
+  "rated_power_factor": {"value": 0.8, "classification": "simulation_parameter"},
+  "rated_rpm": {"value": 1800, "classification": "simulation_parameter"},
+  "phases": {"value": 3, "classification": "simulation_parameter"},
+  "fuel_type": {"value": "diesel", "classification": "simulation_parameter"},
+  "parameters": {"start_delay_s": {"value": 2, "classification": "simulation_parameter"}, "crank_duration_s": {"value": 3, "classification": "simulation_parameter"}, "warm_up_s": {"value": 6, "classification": "simulation_parameter"}, "cool_down_s": {"value": 8, "classification": "simulation_parameter"}, "minimum_recommended_loading_pct": {"value": 30, "classification": "simulation_parameter"}, "ramp_up_kw_per_s": {"value": 60, "classification": "simulation_parameter"}},
+  "metadata": {"source": "demo profile", "source_document": null, "source_url": null, "datasheet_revision": null, "notes": "All numeric values are simulation parameters, not manufacturer specifications."}
+}

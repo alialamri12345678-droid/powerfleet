@@ -1,0 +1,13 @@
+{
+  "profile_id": "dse8660_mkii_demo",
+  "model": "DSE8660 MKII",
+  "family": "DSE86xxMKII",
+  "gencomm_version": 1,
+  "role": "mains_controller",
+  "supported_features": ["grid_synchronization", "import_export_control", "modbus_tcp", "modbus_rtu"],
+  "supported_pages": [0, 1, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14, 16, 17, 18, 20, 24],
+  "read_only_registers": [9, 1059, 1091, 1584],
+  "writable_registers": [4104, 4105],
+  "communications": {"tcp": {"supported": true, "default_port": 502, "host_unit_id": 10}, "rs485": {"supported": true, "data_bits": 8, "parity": "none", "stop_bits": 1}},
+  "metadata": {"source": "DSE GenComm document supplied by user", "source_document": "GenComm.docx", "source_url": null, "datasheet_revision": null, "notes": "Demo mains-controller profile; verify model-specific capability details before acceptance testing."}
+}

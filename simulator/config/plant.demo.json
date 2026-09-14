@@ -1,0 +1,68 @@
+{
+  "name": "Test Power Station",
+  "voltage_v": 400.0,
+  "frequency_hz": 50.0,
+  "modbus_rtu": {
+    "enabled": false,
+    "serial_port": "COM9",
+    "baudrate": 19200,
+    "data_bits": 8,
+    "parity": "N",
+    "stop_bits": 1
+  },
+  "generators": [],
+  "mains_controller": {
+    "controller_profile": "catalog:controller:dse335_mkii",
+    "modbus": {
+      "host": "0.0.0.0",
+      "port": 5021,
+      "unit_id": 20
+    }
+  },
+  "grid": {
+    "enabled": true,
+    "closed_on_start": true,
+    "voltage_v": 400.0,
+    "frequency_hz": 50.0
+  },
+  "solar": {
+    "enabled": true,
+    "closed_on_start": true,
+    "name": "SOLAR",
+    "rated_kw": 500.0,
+    "irradiance_pct": 80,
+    "inverter_efficiency": 0.98,
+    "ramp_kw_per_s": 100
+  },
+  "loads": [
+    {
+      "name": "Main plant load",
+      "active_kw": 400,
+      "power_factor": 0.9,
+      "variation_pct": 1.0
+    },
+    {
+      "name": "HVAC",
+      "active_kw": 100,
+      "power_factor": 0.88,
+      "variation_pct": 2.0
+    },
+    {
+      "name": "Pump",
+      "active_kw": 75,
+      "power_factor": 0.85
+    },
+    {
+      "name": "Lighting",
+      "active_kw": 40,
+      "power_factor": 0.95
+    }
+  ],
+  "synchronization": {
+    "max_frequency_difference_hz": 0.2,
+    "max_voltage_difference_pct": 5.0,
+    "max_phase_angle_difference_deg": 10.0,
+    "minimum_stable_s": 0.5,
+    "timeout_s": 30.0
+  }
+}

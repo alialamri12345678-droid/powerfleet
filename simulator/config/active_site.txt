@@ -1,0 +1,1 @@
+C:\Users\alial\Documents\scada\simulator\config\sites\ali.json
