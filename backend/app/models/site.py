@@ -1,6 +1,6 @@
 """Site model — one per customer installation."""
 
-from sqlalchemy import Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, generate_uuid
@@ -13,6 +13,9 @@ class Site(Base, TimestampMixin):
         String(36), primary_key=True, default=generate_uuid
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     timezone: Mapped[str] = mapped_column(
         String(64), nullable=False, default="UTC"
@@ -24,6 +27,7 @@ class Site(Base, TimestampMixin):
 
     # Relationships
     panels = relationship("Panel", back_populates="site", cascade="all, delete-orphan")
+    organization = relationship("Organization", back_populates="sites")
     thresholds = relationship("Threshold", back_populates="site", cascade="all, delete-orphan")
     events = relationship("Event", back_populates="site", cascade="all, delete-orphan")
 

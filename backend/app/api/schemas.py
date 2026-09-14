@@ -3,6 +3,7 @@
 from datetime import datetime, date
 from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
+from app.controllers.profiles import CONTROLLER_PROFILES
 
 
 # ── Site Schemas ────────────────────────────────────────────────────────
@@ -11,6 +12,16 @@ class SiteBase(BaseModel):
     address: str | None = None
     timezone: str = "UTC"
     max_parallel_units: int | None = Field(None, ge=1, le=16)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("timezone must be a valid IANA timezone") from exc
+        return value
 
 
 class SiteCreate(SiteBase):
@@ -32,6 +43,18 @@ class SiteUpdate(BaseModel):
     timezone: str | None = None
     max_parallel_units: int | None = Field(None, ge=1, le=16)
 
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("timezone must be a valid IANA timezone") from exc
+        return value
+
 
 # ── Panel Schemas ───────────────────────────────────────────────────────
 class PanelBase(BaseModel):
@@ -42,6 +65,16 @@ class PanelBase(BaseModel):
     rated_kw: float = Field(..., ge=0)
     rated_kvar: float = Field(0.0, ge=0)
     priority: int | None = Field(None, ge=1, le=1000)
+    controller_profile: str = "dse_86xx_mkii"
+    maintenance_interval_hours: float = Field(250, ge=25, le=5000)
+    maintenance_limits: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("controller_profile")
+    @classmethod
+    def validate_controller_profile(cls, value: str) -> str:
+        if value not in CONTROLLER_PROFILES:
+            raise ValueError("unsupported controller profile")
+        return value
 
 
 class PanelCreate(PanelBase):
@@ -56,6 +89,16 @@ class PanelUpdate(BaseModel):
     rated_kw: float | None = Field(None, ge=0)
     rated_kvar: float | None = Field(None, ge=0)
     priority: int | None = Field(None, ge=1, le=1000)
+    controller_profile: str | None = None
+    maintenance_interval_hours: float | None = Field(None, ge=25, le=5000)
+    maintenance_limits: dict[str, float] | None = None
+
+    @field_validator("controller_profile")
+    @classmethod
+    def validate_controller_profile(cls, value: str | None) -> str | None:
+        if value is not None and value not in CONTROLLER_PROFILES:
+            raise ValueError("unsupported controller profile")
+        return value
 
 
 class PanelResponse(PanelBase):
@@ -70,6 +113,22 @@ class PanelResponse(PanelBase):
 
 class ManualCommandRequest(BaseModel):
     reason: str = Field("Manual command initiated by user", max_length=200)
+
+
+class CommandRecordResponse(BaseModel):
+    id: str
+    panel_id: str | None
+    command: str
+    status: str
+    triggered_by: str
+    reason: str | None
+    detail: str | None
+    requested_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+    class Config:
+        from_attributes = True
 
 
 # ── Schedule Schemas ────────────────────────────────────────────────────
@@ -364,3 +423,50 @@ class ReportResponse(BaseModel):
     generators: list[GeneratorWorkSummary]
     recent_sessions: list[ReportSessionItem]
 
+
+class MaintenanceFinding(BaseModel):
+    severity: Literal["warning", "critical"]
+    metric: str
+    title: str
+    detail: str
+    recommendation: str
+    current_value: float | int
+    unit: str
+
+
+class PreventiveMaintenanceReport(BaseModel):
+    panel_id: str
+    generator_name: str
+    controller_profile: str
+    period: str
+    generated_at: datetime
+    condition_score: int
+    condition: str
+    sample_count: int
+    data_from: datetime | None
+    data_to: datetime | None
+    current_readings: dict[str, Any]
+    reading_units: dict[str, str]
+    trends: dict[str, dict[str, float]]
+    findings: list[MaintenanceFinding]
+    service: dict[str, float]
+    limitations: list[str]
+
+
+class MaintenanceRecordCreate(BaseModel):
+    service_date: date
+    run_hours: float = Field(..., ge=0)
+    service_type: str = Field("Routine service", max_length=100)
+    notes: str | None = Field(None, max_length=2000)
+    performed_by: str | None = Field(None, max_length=200)
+
+
+class MaintenanceRecordResponse(MaintenanceRecordCreate):
+    id: str
+    panel_id: str
+    site_id: str
+    recorded_by: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

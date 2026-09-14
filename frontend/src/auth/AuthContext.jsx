@@ -26,6 +26,7 @@ export function AuthProvider({ children }) {
           role: profile.role,
           site_id: profile.site_id,
           full_name: profile.full_name,
+          organization_id: profile.organization_id,
         };
         setUser(userInfo);
         localStorage.setItem('user_info', JSON.stringify(userInfo));
@@ -57,6 +58,7 @@ export function AuthProvider({ children }) {
       site_id: data.site_id,
       full_name: data.full_name,
       email,
+      organization_id: data.organization_id,
     };
     setUser(userInfo);
     localStorage.setItem('user_info', JSON.stringify(userInfo));

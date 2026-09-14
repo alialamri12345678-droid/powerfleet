@@ -1,7 +1,8 @@
 """Application configuration loaded from environment variables."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+import uuid
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +24,11 @@ class Settings(BaseSettings):
 
     # ── Modbus Gateway ────────────────────────────────────────────────
     modbus_poll_interval_ms: int = 1000
+    telemetry_sample_interval_seconds: int = 60
+    telemetry_retention_days: int = 400
+    runtime_mode: Literal["combined", "api", "gateway"] = "combined"
+    gateway_owner_id: str = str(uuid.uuid4())
+    gateway_lease_ttl_seconds: int = 30
     register_map_path: str = str(
         Path(__file__).resolve().parent.parent / "register_map.yaml"
     )
@@ -46,6 +52,7 @@ class Settings(BaseSettings):
     port: int = 8000
     debug: bool = False
     allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]
+    force_https: bool = False
     
     def model_post_init(self, __context: Any) -> None:
         insecure_secrets = {

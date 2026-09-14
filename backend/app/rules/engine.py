@@ -261,10 +261,15 @@ class RulesEngine:
         start_h, start_m = map(int, start_time.split(":"))
         end_h, end_m = map(int, end_time.split(":"))
         
-        start_dt = datetime.combine(exc_date, datetime.min.time()).replace(hour=start_h, minute=start_m)
-        end_dt = datetime.combine(exc_date, datetime.min.time()).replace(hour=end_h, minute=end_m)
+        from zoneinfo import ZoneInfo
+        try:
+            site_tz = ZoneInfo(exc.get("timezone", "UTC"))
+        except Exception:
+            site_tz = timezone.utc
+        start_dt = datetime.combine(exc_date, datetime.min.time(), tzinfo=site_tz).replace(hour=start_h, minute=start_m)
+        end_dt = datetime.combine(exc_date, datetime.min.time(), tzinfo=site_tz).replace(hour=end_h, minute=end_m)
         
-        now = datetime.now()
+        now = datetime.now(site_tz)
         if start_dt > now:
             start_job_id = f"exc_start_{exc_id}"
             self._scheduler.add_job(
@@ -349,8 +354,7 @@ class RulesEngine:
         # Skip if there's a holiday exception for today and this isn't the exception job itself
         if not is_exception and self._get_schedule_exceptions:
             exceptions = await self._get_schedule_exceptions()
-            today = datetime.now().date()
-            if any(e["panel_id"] == panel_id and e["exception_date"] == today and not e["is_active"] for e in exceptions):
+            if self._has_holiday_today(panel_id, exceptions):
                 logger.info("Schedule %s skipped due to holiday exception for panel %s", schedule_id, panel_id)
                 return
 
@@ -366,8 +370,7 @@ class RulesEngine:
         """Execute a scheduled Remote Stop by updating intent."""
         if not is_exception and self._get_schedule_exceptions:
             exceptions = await self._get_schedule_exceptions()
-            today = datetime.now().date()
-            if any(e["panel_id"] == panel_id and e["exception_date"] == today and not e["is_active"] for e in exceptions):
+            if self._has_holiday_today(panel_id, exceptions):
                 logger.info("Schedule %s skipped due to holiday exception for panel %s", schedule_id, panel_id)
                 return
                 
@@ -638,6 +641,20 @@ class RulesEngine:
                         site_id[:8], panel_id, total_facility_load_pct, release_pct
                     )
 
+    @staticmethod
+    def _has_holiday_today(panel_id: str, exceptions: list[dict[str, Any]]) -> bool:
+        from zoneinfo import ZoneInfo
+        for exc in exceptions:
+            if exc.get("panel_id") != panel_id or exc.get("is_active"):
+                continue
+            try:
+                local_today = datetime.now(ZoneInfo(exc.get("timezone", "UTC"))).date()
+            except Exception:
+                local_today = datetime.now(timezone.utc).date()
+            if exc.get("exception_date") == local_today:
+                return True
+        return False
+
     async def _pick_backup(self, idle_panels: list[str], needed_kw: float = 0.0) -> str | None:
         """Select the best backup panel: maintenance skip, no alarms, highest priority (lowest number), fewest run hours."""
         if not idle_panels:
@@ -672,7 +689,16 @@ class RulesEngine:
             
         # Overwrite priority with daily priorities if available
         if getattr(self, "_get_daily_priorities", None):
+            from zoneinfo import ZoneInfo
             current_day = datetime.now(timezone.utc).weekday()
+            first_state = self._gateway.states.get(idle_panels[0]) if idle_panels else None
+            if first_state and self._get_site:
+                site = await self._get_site(first_state.site_id)
+                if site:
+                    try:
+                        current_day = datetime.now(ZoneInfo(site.get("timezone", "UTC"))).weekday()
+                    except Exception:
+                        pass
             daily_priorities = await self._get_daily_priorities()
             priority_map = {
                 dp.get("panel_id"): dp.get("priority")

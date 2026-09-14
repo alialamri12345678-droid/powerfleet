@@ -1,7 +1,7 @@
 """User model — authenticated customers with full installation access."""
 
 from sqlalchemy import CheckConstraint, ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, generate_uuid
 
@@ -34,6 +34,10 @@ class User(Base, TimestampMixin):
         String(36), ForeignKey("sites.id", ondelete="CASCADE"),
         index=True, nullable=False,
     )
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    organization = relationship("Organization", back_populates="users")
 
     def __repr__(self) -> str:
         return f"<User id={self.id!r} email={self.email!r} role={self.role!r}>"

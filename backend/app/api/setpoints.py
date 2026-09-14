@@ -14,6 +14,7 @@ from app.dependencies import get_gateway, get_current_user
 from app.models.panel import Panel
 from app.models.power_setpoint import PowerSetpoint
 from app.modbus.gateway import ModbusGateway
+from app.services.commands import enqueue_command
 
 router = APIRouter(prefix="/setpoints", tags=["Power Setpoints"])
 
@@ -56,7 +57,7 @@ async def update_setpoint(
     body: PowerSetpointCreate,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    gateway: Annotated[ModbusGateway, Depends(get_gateway)],
+    gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
 ) -> PowerSetpointResponse:
     """Set fixed-power / base-load target. Writes to Modbus register."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
@@ -88,6 +89,13 @@ async def update_setpoint(
 
     # If active, write to Modbus register
     if sp.is_active:
+        if gateway is None:
+            await enqueue_command(
+                panel, "set_power", "manual",
+                f"Customer setpoint write by {user.full_name or user.email}",
+                user.id, payload={"kw_pct": int(sp.target_kw_pct)},
+            )
+            return PowerSetpointResponse.model_validate(sp)
         success, msg = await gateway.write_power_setpoint(
             panel_id=panel_id,
             kw_pct=int(sp.target_kw_pct),

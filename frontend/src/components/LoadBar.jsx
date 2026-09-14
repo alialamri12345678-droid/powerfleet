@@ -1,6 +1,8 @@
 import React from 'react';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function LoadBar({ loadKw = 0, loadPct = 0, ratedKw = 500, isRunning = false }) {
+  const { t, formatNumber } = useLocale();
   const clampPct = Math.min(100, Math.max(0, loadPct));
   let barColorClass = 'normal';
 
@@ -15,9 +17,9 @@ export function LoadBar({ loadKw = 0, loadPct = 0, ratedKw = 500, isRunning = fa
   return (
     <div className="load-section">
       <div className="load-header">
-        <span>Load</span>
+        <span>{t('load')}</span>
         <span className="tabular-nums load-value">
-          {isRunning ? `${Math.round(loadKw)} kW (${Math.round(clampPct)}%)` : '0 kW (0%)'}
+          {isRunning ? `${formatNumber(Math.round(loadKw))} kW (${formatNumber(Math.round(clampPct))}%)` : `0 kW (0%)`}
         </span>
       </div>
       <div className="load-bar-track">

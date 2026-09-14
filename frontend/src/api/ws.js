@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { apiRequest } from './client';
 
 /**
  * Custom React hook for live WebSocket telemetry stream.
@@ -13,13 +14,20 @@ export function useWebSocketTelemetry(refreshKey = 0) {
   useEffect(() => {
     let isMounted = true;
 
-    function connect() {
-      const token = localStorage.getItem('access_token');
-      if (!token) {
+    async function connect() {
+      if (!localStorage.getItem('access_token')) {
         setGatewayStatus('unauthorized');
         return;
       }
 
+      let token;
+      try {
+        token = (await apiRequest('/auth/stream-token')).token;
+      } catch {
+        if (isMounted) setGatewayStatus('unauthorized');
+        return;
+      }
+      if (!isMounted) return;
       // Determine websocket URL
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws/status?token=${encodeURIComponent(token)}`;

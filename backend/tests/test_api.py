@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 
 from app.auth.models import User
 from app.auth.service import create_access_token, hash_password
+from app.auth.service import decode_token
 from app.db.session import async_session_factory, engine
 from app.dependencies import get_gateway, get_rules_engine
 from app.main import create_app, seed_initial_data
@@ -17,6 +18,7 @@ from app.models.base import Base
 from app.models.daily_priority import DailyPriority
 from app.models.event import Event
 from app.models.override import Override
+from app.models.organization import Organization
 from app.models.panel import Panel
 from app.models.power_setpoint import PowerSetpoint
 from app.models.release_threshold import ReleaseThreshold
@@ -25,6 +27,7 @@ from app.models.schedule_exception import ScheduleException
 from app.models.site import Site
 from app.models.start_threshold import StartThreshold
 from app.models.threshold import Threshold
+from app.models.telemetry_sample import TelemetrySample
 from app.modbus.gateway import ModbusGateway
 from app.rules.engine import RulesEngine
 
@@ -36,14 +39,21 @@ async def setup_db():
         await conn.run_sync(Base.metadata.create_all)
     async with async_session_factory() as session:
         session.add_all([
-            Site(id="site_1", name="Test Facility", timezone="UTC", max_parallel_units=3),
-            Site(id="site_2", name="Second Facility", timezone="Asia/Riyadh"),
+            Organization(id="org_1", name="Test Customer"),
+            Organization(id="org_2", name="Other Customer"),
+        ])
+        await session.flush()
+        session.add_all([
+            Site(id="site_1", organization_id="org_1", name="Test Facility", timezone="UTC", max_parallel_units=3),
+            Site(id="site_2", organization_id="org_1", name="Second Facility", timezone="Asia/Riyadh"),
+            Site(id="other_customer_site", organization_id="org_2", name="Private Facility", timezone="UTC"),
         ])
         await session.flush()
         session.add(User(
             id="user_customer", email="customer@test.com",
             password_hash=hash_password("pass123"), full_name="Test Customer",
             role="customer", site_id="site_1",
+            organization_id="org_1",
         ))
         session.add_all([
             Panel(id="p1", site_id="site_1", name="Test Generator 1",
@@ -90,6 +100,9 @@ async def test_customer_can_login_refresh_and_read_profile(app):
         profile = await ac.get("/auth/me", headers={"Authorization": f"Bearer {refresh.json()['access_token']}"})
         assert profile.status_code == 200
         assert profile.json()["role"] == "customer"
+        stream = await ac.get("/auth/stream-token", headers={"Authorization": f"Bearer {refresh.json()['access_token']}"})
+        assert stream.status_code == 200
+        assert decode_token(stream.json()["token"])["type"] == "stream"
 
 
 @pytest.mark.asyncio
@@ -132,14 +145,26 @@ async def test_customer_can_manage_and_switch_installation_sites(app, headers):
         assert switched.status_code == 200
         new_headers = {"Authorization": f"Bearer {switched.json()['access_token']}"}
         assert [p["id"] for p in (await ac.get("/panels", headers=new_headers)).json()] == ["other_panel"]
+        # The original browser session remains on its original site.
+        assert [p["id"] for p in (await ac.get("/panels", headers=headers)).json()] == ["p1"]
         assert (await ac.delete(f"/sites/{site_id}", headers=new_headers)).status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_customer_cannot_discover_or_switch_to_another_organization(app, headers):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        visible = await ac.get("/sites", headers=headers)
+        assert {site["id"] for site in visible.json()} == {"site_1", "site_2"}
+        assert (await ac.post("/sites/switch/other_customer_site", headers=headers)).status_code == 404
+        invalid_tz = await ac.post("/sites", headers=headers, json={"name": "Bad timezone", "timezone": "Mars/Olympus"})
+        assert invalid_tz.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_delete_site_preserves_all_customer_accounts_and_unregisters_generators(app, headers):
     async with async_session_factory() as session:
         session.add(User(id="colleague", email="colleague@test.com", password_hash="unchanged",
-                         full_name="Colleague", role="customer", site_id="site_1"))
+                         full_name="Colleague", role="customer", site_id="site_1", organization_id="org_1"))
         await session.commit()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         await ac.get("/thresholds/start", headers=headers)
@@ -286,3 +311,50 @@ async def test_reports_summary_and_csv_export(app, headers):
         exported = await ac.get("/reports/export?period=30d", headers=headers)
         assert exported.status_code == 200
         assert "Test Generator 1" in exported.text
+
+
+@pytest.mark.asyncio
+async def test_preventive_maintenance_report_is_per_generator_and_exportable(app, headers):
+    async with async_session_factory() as session:
+        session.add(TelemetrySample(
+            id="sample_1", site_id="site_1", panel_id="p1", is_reachable=True,
+            engine_status="running", load_kw=475, load_kw_percent=95,
+            coolant_temperature=102, oil_pressure=1.5, battery_voltage=12.7,
+            fuel_level_percent=15, frequency=50, run_hours=249,
+            number_of_starts=80, active_alarm_count=0,
+            readings={"coolant_temperature": 102, "fuel_level_percent": 15},
+        ))
+        await session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/reports/preventive-maintenance/p1?period=30d", headers=headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["generator_name"] == "Test Generator 1"
+        assert body["sample_count"] == 1
+        assert body["condition_score"] < 100
+        assert {f["metric"] for f in body["findings"]} >= {"coolant_temperature", "oil_pressure", "fuel_level_percent"}
+        exported = await ac.get("/reports/preventive-maintenance/p1/export?period=30d", headers=headers)
+        assert exported.status_code == 200
+        assert "PREVENTIVE MAINTENANCE REPORT" in exported.text
+        assert "Test Generator 1" in exported.text
+
+        recorded = await ac.post("/reports/preventive-maintenance/p1/records", headers=headers, json={
+            "service_date": date.today().isoformat(), "run_hours": 249,
+            "service_type": "250-hour service", "performed_by": "Service Team",
+        })
+        assert recorded.status_code == 201
+        refreshed = (await ac.get("/reports/preventive-maintenance/p1?period=30d", headers=headers)).json()
+        assert refreshed["service"]["next_service_hours"] == 499
+
+
+@pytest.mark.asyncio
+async def test_api_only_mode_queues_durable_commands(app, headers):
+    app.dependency_overrides[get_gateway] = lambda: None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        queued = await ac.post("/panels/p1/start", headers=headers, json={"reason": "Remote request"})
+        assert queued.status_code == 200
+        assert queued.json()["status"] == "queued"
+        command_id = queued.json()["command_id"]
+        status_response = await ac.get(f"/panels/commands/{command_id}", headers=headers)
+        assert status_response.status_code == 200
+        assert status_response.json()["status"] == "queued"

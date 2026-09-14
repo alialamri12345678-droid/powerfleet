@@ -6,9 +6,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from sqlalchemy import func, select
 
 from app.api.diagnostics import router as diagnostics_router
 from app.api.events import router as events_router
@@ -27,6 +28,8 @@ from app.db.session import async_session_factory, engine
 from app.models.base import Base
 from app.models.event import Event
 from app.models.override import Override
+from app.models.organization import Organization
+from app.models.command_record import CommandRecord
 from app.models.panel import Panel
 from app.models.schedule import Schedule
 from app.models.site import Site
@@ -34,6 +37,9 @@ from app.models.threshold import Threshold
 from app.modbus.gateway import ModbusGateway
 from app.modbus.panel_state import PanelState
 from app.rules.engine import RulesEngine
+from app.telemetry import TelemetryRecorder
+from app.services.commands import dispatch_queued_commands
+from app.services.gateway_lease import acquire_site_leases, renew_site_leases, release_site_leases
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +50,24 @@ logger = logging.getLogger("scada")
 # Global singletons
 gateway_instance: ModbusGateway | None = None
 rules_engine_instance: RulesEngine | None = None
+telemetry_recorder = TelemetryRecorder(
+    settings.telemetry_sample_interval_seconds, settings.telemetry_retention_days
+)
+
+
+async def maintain_gateway_leases(stop_event: asyncio.Event, expected_count: int) -> None:
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=max(5, settings.gateway_lease_ttl_seconds // 3))
+        except asyncio.TimeoutError:
+            renewed = await renew_site_leases(settings.gateway_owner_id, settings.gateway_lease_ttl_seconds)
+            if renewed < expected_count:
+                logger.critical("Gateway lost facility ownership lease; stopping device control")
+                stop_event.set()
+                if rules_engine_instance:
+                    await rules_engine_instance.stop()
+                if gateway_instance:
+                    await gateway_instance.stop()
 
 
 async def seed_initial_data():
@@ -59,9 +83,14 @@ async def seed_initial_data():
                 "BOOTSTRAP_ADMIN_PASSWORD to initialize this installation."
             )
 
-        site = (await session.execute(select(Site).limit(1))).scalars().first()
+        organization = (await session.execute(select(Organization).limit(1))).scalars().first()
+        if organization is None:
+            organization = Organization(name="Customer Organization")
+            session.add(organization)
+            await session.flush()
+        site = (await session.execute(select(Site).where(Site.organization_id == organization.id).limit(1))).scalars().first()
         if site is None:
-            site = Site(name="Main Facility", timezone="UTC", max_parallel_units=3)
+            site = Site(name="Main Facility", organization_id=organization.id, timezone="UTC", max_parallel_units=3)
             session.add(site)
             await session.flush()
             session.add(Threshold(
@@ -78,6 +107,7 @@ async def seed_initial_data():
             full_name="Facility Manager",
             role="customer",
             site_id=site.id,
+            organization_id=organization.id,
         ))
         await session.commit()
         logger.info("Customer account created for %s", settings.bootstrap_admin_email)
@@ -137,9 +167,58 @@ async def log_event_to_db(
         logger.error("Failed to log event to DB: %s", exc)
 
 
+async def record_command_lifecycle(
+    command_id: str, panel_id: str, command: str, status: str,
+    triggered_by: str, reason: str = "", user_id: str | None = None,
+    detail: str | None = None,
+):
+    """Upsert a durable command state so restarts do not erase outcomes."""
+    try:
+        async with async_session_factory() as session:
+            record = await session.get(CommandRecord, command_id)
+            now = datetime.now(timezone.utc)
+            if record is None:
+                panel = await session.get(Panel, panel_id)
+                if panel is None:
+                    return
+                record = CommandRecord(
+                    id=command_id, site_id=panel.site_id, panel_id=panel_id,
+                    command=command, status=status, triggered_by=triggered_by,
+                    requested_by=user_id, reason=reason, detail=detail,
+                    requested_at=now, updated_at=now,
+                )
+                session.add(record)
+            else:
+                record.status = status
+                record.detail = detail
+                record.updated_at = now
+            if status in {"confirmed", "failed", "rejected", "unknown"}:
+                record.completed_at = now
+            await session.commit()
+    except Exception as exc:
+        logger.error("Failed to persist command %s lifecycle: %s", command_id, exc)
+
+
+async def close_interrupted_commands() -> None:
+    """Commands awaiting physical feedback cannot be assumed successful after restart."""
+    async with async_session_factory() as session:
+        result = await session.execute(select(CommandRecord).where(
+            CommandRecord.status.in_(["requested", "acknowledged"])
+        ))
+        now = datetime.now(timezone.utc)
+        for record in result.scalars().all():
+            record.status = "unknown"
+            record.detail = "Gateway restarted before physical confirmation"
+            record.updated_at = now
+            record.completed_at = now
+        await session.commit()
+
+
 def handle_panel_state_update(panel_id: str, state: PanelState):
     """Callback fired on every gateway poll — broadcasts telemetry via WebSocket."""
     asyncio.create_task(broadcast_state_update(panel_id, state))
+    if state.is_reachable:
+        asyncio.create_task(telemetry_recorder.record_if_due(panel_id, state))
 
 
 async def broadcast_state_update(panel_id: str, state: PanelState):
@@ -189,8 +268,9 @@ async def rules_get_schedules():
 async def rules_get_schedule_exceptions():
     async with async_session_factory() as session:
         from app.models.schedule_exception import ScheduleException
-        res = await session.execute(select(ScheduleException))
-        exceptions = res.scalars().all()
+        res = await session.execute(
+            select(ScheduleException, Site.timezone).join(Site, ScheduleException.site_id == Site.id)
+        )
         return [
             {
                 "id": e.id,
@@ -199,8 +279,9 @@ async def rules_get_schedule_exceptions():
                 "is_active": e.is_active,
                 "start_time": e.start_time,
                 "end_time": e.end_time,
+                "timezone": site_timezone or "UTC",
             }
-            for e in exceptions
+            for e, site_timezone in res.all()
         ]
 
 
@@ -323,12 +404,15 @@ async def rules_get_panel(panel_id: str):
 async def rules_reconstruct_threshold_state():
     """Return dict of panel_id -> datetime for panels currently started by threshold rules."""
     async with async_session_factory() as session:
-        # Get the latest command event for each panel
-        # A bit complex in SQL, but we can just fetch the last 100 events and figure it out
-        from sqlalchemy import desc
-        res = await session.execute(
-            select(Event).where(Event.event_type == "command_sent").order_by(desc(Event.timestamp)).limit(200)
+        latest = (
+            select(Event.panel_id, func.max(Event.timestamp).label("latest_timestamp"))
+            .where(Event.event_type == "command_sent", Event.panel_id.is_not(None))
+            .group_by(Event.panel_id).subquery()
         )
+        res = await session.execute(select(Event).join(
+            latest,
+            (Event.panel_id == latest.c.panel_id) & (Event.timestamp == latest.c.latest_timestamp),
+        ))
         events = res.scalars().all()
         
         latest_commands = {}
@@ -351,6 +435,8 @@ async def lifespan(app: FastAPI):
     global gateway_instance, rules_engine_instance
 
     logger.info("Initializing SCADA Gateway Backend...")
+    gateway_instance = None
+    rules_engine_instance = None
 
     # 1. Initialize tables (dev auto-creation)
     async with engine.begin() as conn:
@@ -359,14 +445,33 @@ async def lifespan(app: FastAPI):
     # 2. Seed default data if needed
     await seed_initial_data()
 
+    if settings.runtime_mode == "api":
+        logger.info("Central API mode: device connections and rules are disabled in this process")
+        try:
+            yield
+        finally:
+            await engine.dispose()
+        return
+
+    await close_interrupted_commands()
+
     # 3. Initialize Modbus Gateway
     gateway_instance = ModbusGateway()
     gateway_instance.set_event_logger(log_event_to_db)
+    gateway_instance.set_command_logger(record_command_lifecycle)
     gateway_instance.on_state_update(handle_panel_state_update)
 
-    # Load panels from DB into gateway
+    # Load only facilities owned by this gateway worker. Local combined mode
+    # intentionally owns all sites for a one-process developer installation.
     async with async_session_factory() as session:
-        res = await session.execute(select(Panel))
+        site_ids = list((await session.execute(select(Site.id))).scalars().all())
+        if settings.runtime_mode == "gateway":
+            owned_site_ids = await acquire_site_leases(
+                settings.gateway_owner_id, site_ids, settings.gateway_lease_ttl_seconds
+            )
+        else:
+            owned_site_ids = set(site_ids)
+        res = await session.execute(select(Panel).where(Panel.site_id.in_(owned_site_ids)))
         panels = res.scalars().all()
         for p in panels:
             gateway_instance.add_panel(
@@ -376,6 +481,7 @@ async def lifespan(app: FastAPI):
                 transport_type=p.transport_type,
                 address=p.address,
                 unit_id=p.unit_id,
+                controller_profile=p.controller_profile,
                 rated_kw=float(p.rated_kw),
             )
 
@@ -404,6 +510,11 @@ async def lifespan(app: FastAPI):
     # Start gateway poll loop & rules engine scheduler
     await gateway_instance.start()
     await rules_engine_instance.start()
+    background_stop = asyncio.Event()
+    command_task = asyncio.create_task(dispatch_queued_commands(gateway_instance, background_stop))
+    lease_task = None
+    if settings.runtime_mode == "gateway":
+        lease_task = asyncio.create_task(maintain_gateway_leases(background_stop, len(owned_site_ids)))
 
     logger.info("SCADA Gateway Backend is online and running.")
 
@@ -411,6 +522,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("Shutting down SCADA Gateway Backend...")
+        background_stop.set()
+        await command_task
+        if lease_task:
+            await lease_task
+            await release_site_leases(settings.gateway_owner_id)
         if rules_engine_instance:
             await rules_engine_instance.stop()
         if gateway_instance:
@@ -436,6 +552,17 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    if settings.force_https:
+        app.add_middleware(HTTPSRedirectMiddleware)
+
+    @app.middleware("http")
+    async def security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
 
     # Include Routers
     app.include_router(auth_router)
@@ -456,7 +583,42 @@ def create_app() -> FastAPI:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "gateway_running": gateway_instance._running if gateway_instance else False,
             "connected_panels": len(gateway_instance.states) if gateway_instance else 0,
+            "runtime_mode": settings.runtime_mode,
         }
+
+    @app.get("/health/ready")
+    async def readiness_check():
+        database_ok = True
+        try:
+            async with async_session_factory() as session:
+                await session.execute(select(Site.id).limit(1))
+        except Exception:
+            database_ok = False
+        gateway_expected = settings.runtime_mode in {"combined", "gateway"}
+        gateway_ok = not gateway_expected or bool(gateway_instance and gateway_instance._running)
+        status_code = 200 if database_ok and gateway_ok else 503
+        return Response(
+            content=("ready" if status_code == 200 else "not ready"),
+            media_type="text/plain", status_code=status_code,
+        )
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics():
+        states = list(gateway_instance.states.values()) if gateway_instance else []
+        reachable = sum(1 for state in states if state.is_reachable)
+        lines = [
+            "# HELP scada_panels_configured Panels assigned to this process",
+            "# TYPE scada_panels_configured gauge",
+            f"scada_panels_configured {len(states)}",
+            "# HELP scada_panels_reachable Panels responding to polling",
+            "# TYPE scada_panels_reachable gauge",
+            f"scada_panels_reachable {reachable}",
+        ]
+        for state in states:
+            age = state.data_age_seconds
+            if age is not None:
+                lines.append(f'scada_telemetry_age_seconds{{panel_id="{state.panel_id}"}} {age:.3f}')
+        return Response(content="\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
     return app
 

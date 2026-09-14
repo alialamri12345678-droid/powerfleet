@@ -23,6 +23,7 @@ class PanelState:
     # Connection health
     is_reachable: bool = False
     last_poll_time: float | None = None  # monotonic timestamp
+    last_poll_attempt_time: float | None = None
     last_successful_poll: datetime | None = None
     consecutive_errors: int = 0
     last_error: str | None = None
@@ -51,6 +52,7 @@ class PanelState:
     oil_pressure: float = 0.0
     battery_voltage: float = 0.0
     engine_speed: int = 0
+    fuel_level_percent: float = 0.0
 
     # Totals
     run_hours: float = 0.0
@@ -60,8 +62,15 @@ class PanelState:
     # Alarms — list of active alarm names
     active_alarms: list[str] = field(default_factory=list)
 
+    # Adapter-neutral readings, units and quality. This lets future controller
+    # profiles expose additional measurements without changing the dashboard API.
+    readings: dict[str, Any] = field(default_factory=dict)
+    reading_units: dict[str, str] = field(default_factory=dict)
+    reading_quality: dict[str, str] = field(default_factory=dict)
+
     # Last command issued by this gateway
     last_command: str | None = None
+    last_command_id: str | None = None
     last_command_time: datetime | None = None
 
     @property
@@ -102,6 +111,7 @@ class PanelState:
     def mark_poll_success(self) -> None:
         """Update connection health after a successful poll."""
         self.is_reachable = True
+        self.last_poll_attempt_time = time.monotonic()
         self.last_poll_time = time.monotonic()
         self.last_successful_poll = datetime.now(timezone.utc)
         self.consecutive_errors = 0
@@ -109,7 +119,7 @@ class PanelState:
 
     def mark_poll_failure(self, error: str) -> None:
         """Update connection health after a failed poll."""
-        self.last_poll_time = time.monotonic()
+        self.last_poll_attempt_time = time.monotonic()
         self.consecutive_errors += 1
         self.last_error = error
         # Mark unreachable after 3 consecutive failures
@@ -148,11 +158,16 @@ class PanelState:
             "oil_pressure": self.oil_pressure,
             "battery_voltage": self.battery_voltage,
             "engine_speed": self.engine_speed,
+            "fuel_level_percent": self.fuel_level_percent,
             "run_hours": self.run_hours,
             "total_kwh": self.total_kwh,
             "number_of_starts": self.number_of_starts,
             "active_alarms": self.active_alarms,
+            "readings": self.readings,
+            "reading_units": self.reading_units,
+            "reading_quality": self.reading_quality,
             "last_command": self.last_command,
+            "last_command_id": self.last_command_id,
             "last_command_time": (
                 self.last_command_time.isoformat()
                 if self.last_command_time

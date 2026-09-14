@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { apiRequest } from '../api/client';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function EventLogPage() {
+  const { t, formatCode, formatDate, formatTime } = useLocale();
   const [events, setEvents] = useState([]);
   const [panels, setPanels] = useState([]);
   const [filterPanel, setFilterPanel] = useState('');
@@ -42,7 +44,7 @@ export function EventLogPage() {
   }
 
   const getPanelName = (panelId) => {
-    if (!panelId) return 'Site / System';
+    if (!panelId) return t('siteSystem');
     const found = panels.find((p) => p.id === panelId);
     return found ? found.name : panelId;
   };
@@ -51,9 +53,9 @@ export function EventLogPage() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Audit Event Log</h1>
+          <h1 className="page-title">{t('auditTitle')}</h1>
           <p className="page-subtitle">
-            Immutable append-only record of all commands, alarms, and automated decisions
+            {t('auditSubtitle')}
           </p>
         </div>
         <button
@@ -62,7 +64,7 @@ export function EventLogPage() {
           onClick={loadEvents}
           disabled={loading}
         >
-          {loading ? 'Refreshing...' : 'Refresh Log'}
+          {loading ? t('refreshing') : t('refreshLog')}
         </button>
       </div>
 
@@ -93,7 +95,7 @@ export function EventLogPage() {
         flexWrap: 'wrap',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <label htmlFor="filter-panel-select" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>Filter Unit:</label>
+          <label htmlFor="filter-panel-select" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>{t('filterUnit')}</label>
           <select
             id="filter-panel-select"
             className="form-select"
@@ -101,7 +103,7 @@ export function EventLogPage() {
             value={filterPanel}
             onChange={(e) => setFilterPanel(e.target.value)}
           >
-            <option value="">All Units</option>
+            <option value="">{t('allUnits')}</option>
             {panels.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
@@ -109,7 +111,7 @@ export function EventLogPage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <label htmlFor="filter-type-select" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>Event Type:</label>
+          <label htmlFor="filter-type-select" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>{t('eventType')}</label>
           <select
             id="filter-type-select"
             className="form-select"
@@ -117,12 +119,9 @@ export function EventLogPage() {
             value={filterType}
             onChange={(e) => setFilterType(e.target.value)}
           >
-            <option value="">All Events</option>
-            <option value="command_sent">Command Sent</option>
-            <option value="alarm_active">Alarm Active</option>
-            <option value="alarm_cleared">Alarm Cleared</option>
-            <option value="override">Override</option>
-            <option value="system">System / Alert</option>
+            <option value="">{t('allEvents')}</option><option value="command_sent">{t('commandSent')}</option>
+            <option value="alarm_active">{t('alarmActive')}</option><option value="alarm_cleared">{t('alarmCleared')}</option>
+            <option value="override">{t('override')}</option><option value="system">{t('systemAlert')}</option>
           </select>
         </div>
       </div>
@@ -137,19 +136,15 @@ export function EventLogPage() {
         <table className="data-table" style={{ border: 'none' }}>
           <thead>
             <tr>
-              <th>Timestamp</th>
-              <th>Generator</th>
-              <th>Event</th>
-              <th>Command / Value</th>
-              <th>Triggered By</th>
-              <th>Reason</th>
+              <th>{t('timestamp')}</th><th>{t('generator')}</th><th>{t('event')}</th>
+              <th>{t('commandValue')}</th><th>{t('triggeredBy')}</th><th>{t('reason')}</th>
             </tr>
           </thead>
           <tbody>
             {events.length === 0 ? (
               <tr>
                 <td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
-                  {loading ? 'Loading events...' : 'No events recorded.'}
+                  {loading ? t('loadingEvents') : t('noEvents')}
                 </td>
               </tr>
             ) : (
@@ -163,19 +158,19 @@ export function EventLogPage() {
                 return (
                   <tr key={evt.id}>
                     <td className="tabular-nums" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                      {date.toLocaleDateString()} {date.toLocaleTimeString()}
+                      {formatDate(date)} {formatTime(date)}
                     </td>
                     <td style={{ fontWeight: 500 }}>{getPanelName(evt.panel_id)}</td>
                     <td>
                       <span style={{ fontSize: '0.75rem', fontWeight: 600, color: badgeColor }}>
-                        {evt.event_type.replace('_', ' ').toUpperCase()}
+                        {formatCode(evt.event_type)}
                       </span>
                     </td>
                     <td className="tabular-nums" style={{ fontSize: '0.8125rem' }}>
-                      {evt.command ? `${evt.command}: ${evt.value || 'OK'}` : (evt.value || '—')}
+                      {evt.command ? `${formatCode(evt.command)}: ${evt.value ? formatCode(evt.value) : t('ok')}` : (evt.value ? formatCode(evt.value) : '—')}
                     </td>
                     <td style={{ fontSize: '0.8125rem', textTransform: 'capitalize' }}>
-                      {evt.triggered_by}
+                      {formatCode(evt.triggered_by)}
                     </td>
                     <td style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
                       {evt.reason || '—'}

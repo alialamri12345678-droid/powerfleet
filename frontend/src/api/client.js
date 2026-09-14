@@ -4,6 +4,32 @@
 
 const API_BASE = '/api';
 
+const ARABIC_ERRORS = {
+  'Incorrect email or password': 'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+  'Invalid or expired refresh token': 'انتهت صلاحية جلسة الدخول',
+  'User not found': 'تعذر العثور على المستخدم',
+  'Generator not found': 'تعذر العثور على المولد',
+  'Panel not found': 'تعذر العثور على لوحة التحكم',
+  'Panel state unavailable': 'حالة لوحة التحكم غير متاحة',
+  'Panel not connected': 'لوحة التحكم غير متصلة',
+  'Site not found': 'تعذر العثور على الموقع',
+  'Target site not found': 'تعذر العثور على الموقع المطلوب',
+  'No panels configured for site': 'لا توجد لوحات تحكم مهيأة للموقع',
+  'Invalid panel_id': 'معرّف لوحة التحكم غير صالح',
+  'Command not found': 'تعذر العثور على الأمر',
+  'Exception not found': 'تعذر العثور على الاستثناء',
+  'Cannot delete the only existing site. Create another site first.': 'لا يمكن حذف الموقع الوحيد. أنشئ موقعًا آخر أولًا.',
+  'Site is not available to this customer': 'هذا الموقع غير متاح لهذا العميل',
+  'Account access has changed; sign in again': 'تغيرت صلاحيات الحساب؛ يرجى تسجيل الدخول مجددًا',
+};
+
+function localizeError(message, status) {
+  if (localStorage.getItem('locale') !== 'ar') return message;
+  if (ARABIC_ERRORS[message]) return ARABIC_ERRORS[message];
+  if (/^Request failed/.test(message)) return `تعذر إكمال الطلب (${status})`;
+  return `تعذر إكمال الطلب: ${message}`;
+}
+
 export async function apiRequest(endpoint, options = {}) {
   const token = localStorage.getItem('access_token');
   const headers = {
@@ -46,7 +72,7 @@ export async function apiRequest(endpoint, options = {}) {
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user_info');
     window.location.href = '/login';
-    throw new Error('Session expired. Please log in again.');
+    throw new Error(localStorage.getItem('locale') === 'ar' ? 'انتهت الجلسة. يرجى تسجيل الدخول مجددًا.' : 'Session expired. Please log in again.');
   }
 
   if (!response.ok) {
@@ -57,7 +83,7 @@ export async function apiRequest(endpoint, options = {}) {
     } catch {
       // not JSON
     }
-    throw new Error(errorDetail);
+    throw new Error(localizeError(errorDetail, response.status));
   }
 
   // Return json or null for 204 No Content

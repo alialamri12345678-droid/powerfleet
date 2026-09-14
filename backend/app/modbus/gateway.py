@@ -10,10 +10,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
+import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from app.config import settings
+from app.controllers import create_adapter
 from app.modbus.cooldown import CooldownManager
 from app.modbus.panel_state import PanelState
 from app.modbus.register_map import RegisterDef, RegisterMap, load_register_map
@@ -46,8 +49,12 @@ class ModbusGateway:
         self._transports: dict[str, ModbusTransport] = {}
         # panel_id → config dict
         self._panel_configs: dict[str, dict[str, Any]] = {}
+        self._adapters: dict[str, Any] = {}
+        self._panel_register_maps: dict[str, RegisterMap] = {}
+        self._io_locks: dict[str, asyncio.Lock] = {}
         # panel_id → live state
         self._states: dict[str, PanelState] = {}
+        self._last_group_poll: dict[tuple[str, str], float] = {}
 
         self._cooldown = CooldownManager()
         self._running = False
@@ -57,6 +64,8 @@ class ModbusGateway:
         self._state_listeners: list[Callable[[str, PanelState], Any]] = []
         # Callback for event logging
         self._event_logger: Callable[..., Any] | None = None
+        self._command_logger: Callable[..., Any] | None = None
+        self._pending_commands: dict[str, dict[str, Any]] = {}
 
     @property
     def register_map(self) -> RegisterMap:
@@ -77,6 +86,9 @@ class ModbusGateway:
     def set_event_logger(self, logger_fn: Callable[..., Any]) -> None:
         """Set the function used to log events to the database."""
         self._event_logger = logger_fn
+
+    def set_command_logger(self, logger_fn: Callable[..., Any]) -> None:
+        self._command_logger = logger_fn
 
     def add_panel(
         self,
@@ -100,6 +112,12 @@ class ModbusGateway:
             "unit_id": unit_id,
             **kwargs,
         }
+        adapter = create_adapter(
+            kwargs.get("controller_profile", "dse_86xx_mkii"), self._register_map
+        )
+        self._adapters[panel_id] = adapter
+        self._panel_register_maps[panel_id] = adapter.register_map
+        self._io_locks.setdefault(panel_id, asyncio.Lock())
         if panel_id not in self._states:
             self._states[panel_id] = PanelState(
                 panel_id=panel_id,
@@ -117,6 +135,11 @@ class ModbusGateway:
         self._panel_configs.pop(panel_id, None)
         self._states.pop(panel_id, None)
         self._cooldown.reset(panel_id)
+        self._adapters.pop(panel_id, None)
+        self._panel_register_maps.pop(panel_id, None)
+        self._io_locks.pop(panel_id, None)
+        for key in [key for key in self._last_group_poll if key[0] == panel_id]:
+            self._last_group_poll.pop(key, None)
         transport = self._transports.pop(panel_id, None)
         if transport:
             asyncio.create_task(transport.disconnect())
@@ -183,9 +206,10 @@ class ModbusGateway:
             return
 
         try:
-            await self._read_status_registers(transport, state, unit_id)
-            await self._read_alarm_registers(transport, state, unit_id)
+            async with self._io_locks.setdefault(panel_id, asyncio.Lock()):
+                await self._read_due_poll_groups(panel_id, transport, state, unit_id)
             state.mark_poll_success()
+            await self._reconcile_command_outcome(panel_id, state)
         except TransportError as exc:
             state.mark_poll_failure(str(exc))
             logger.warning("Poll failed for panel %s: %s", panel_id, exc)
@@ -223,116 +247,87 @@ class ModbusGateway:
 
     # ── Register Reads ────────────────────────────────────────────────
 
-    async def _read_status_registers(
-        self, transport: ModbusTransport, state: PanelState, unit_id: int
+    async def _read_due_poll_groups(
+        self, panel_id: str, transport: ModbusTransport, state: PanelState, unit_id: int
     ) -> None:
-        """Read core status and telemetry registers into PanelState."""
-        rmap = self._register_map
+        """Honor the map's sampling intervals instead of reading every point every second."""
+        now = time.monotonic()
+        telemetry_names: set[str] = set()
+        alarm_names: set[str] = set()
+        groups = self._panel_register_maps.get(panel_id, self._register_map).poll_groups
+        if not groups:
+            await self._read_status_registers(transport, state, unit_id)
+            await self._read_alarm_registers(transport, state, unit_id)
+            return
+        for group in groups:
+            key = (panel_id, group.name)
+            interval = max(group.interval_ms / 1000.0, self._poll_interval)
+            if now - self._last_group_poll.get(key, 0.0) < interval:
+                continue
+            for name in group.register_names:
+                if name.startswith("alarm_condition_"):
+                    alarm_names.add(name)
+                else:
+                    telemetry_names.add(name)
+            self._last_group_poll[key] = now
+        if telemetry_names:
+            await self._read_status_registers(transport, state, unit_id, telemetry_names)
+        if alarm_names:
+            await self._read_alarm_registers(transport, state, unit_id, alarm_names)
 
-        # Engine status
-        reg = rmap.get("engine_status")
-        if reg:
+    async def _read_status_registers(
+        self, transport: ModbusTransport, state: PanelState, unit_id: int,
+        register_names: set[str] | None = None,
+    ) -> None:
+        """Read every configured telemetry point into normalized panel state.
+
+        Alarm bitfields are handled separately so they can produce transition
+        events. Writable setpoints are intentionally not treated as telemetry.
+        """
+        rmap = self._panel_register_maps.get(state.panel_id, self._register_map)
+        adapter = self._adapters.get(state.panel_id) or create_adapter("dse_86xx_mkii", rmap)
+        attempted = 0
+        successful = 0
+        for reg in rmap.readable_registers():
+            if reg.fields or reg.access == "readwrite":
+                continue
+            if register_names is not None and reg.name not in register_names:
+                continue
+            attempted += 1
             raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.engine_status = reg.values.get(raw, "unknown")
-
-        # Generator breaker
-        reg = rmap.get("generator_breaker")
-        if reg:
-            raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.generator_breaker = bool(raw)
-
-        # Sync status
-        reg = rmap.get("sync_status")
-        if reg:
-            raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.sync_status = bool(raw)
-
-        # Load kW
-        reg = rmap.get("load_kw")
-        if reg:
-            raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.load_kw = raw * reg.scale
-
-        # Load kW %
-        reg = rmap.get("load_kw_percent")
-        if reg:
-            raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.load_kw_percent = float(raw)
-
-        # Load kVAr
-        reg = rmap.get("load_kvar")
-        if reg:
-            raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.load_kvar = raw * reg.scale
-
-        # Load kVAr %
-        reg = rmap.get("load_kvar_percent")
-        if reg:
-            raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.load_kvar_percent = float(raw)
-
-        # Voltages
-        for vname in ("voltage_l1_n", "voltage_l2_n", "voltage_l3_n"):
-            reg = rmap.get(vname)
-            if reg:
-                raw = await self._read_register(transport, reg, unit_id)
-                if raw is not None:
-                    setattr(state, vname, raw * reg.scale)
-
-        # Frequency
-        reg = rmap.get("frequency")
-        if reg:
-            raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.frequency = raw * reg.scale
-
-        # Engine health
-        for ename in ("coolant_temperature", "oil_pressure", "battery_voltage", "engine_speed"):
-            reg = rmap.get(ename)
-            if reg:
-                raw = await self._read_register(transport, reg, unit_id)
-                if raw is not None:
-                    val = raw * reg.scale if reg.scale != 1.0 else raw
-                    setattr(state, ename, val)
-
-        # Run hours (32-bit)
-        reg = rmap.get("run_hours")
-        if reg:
-            raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.run_hours = raw * reg.scale
-
-        # Total kWh (32-bit)
-        reg = rmap.get("total_kwh")
-        if reg:
-            raw = await self._read_register(transport, reg, unit_id)
-            if raw is not None:
-                state.total_kwh = float(raw)
+            if raw is None:
+                state.reading_quality[reg.name] = "unavailable"
+                continue
+            successful += 1
+            adapter.apply_reading(state, reg, raw)
+        if attempted and successful == 0:
+            raise TransportError("No telemetry registers responded")
 
     async def _read_alarm_registers(
-        self, transport: ModbusTransport, state: PanelState, unit_id: int
+        self, transport: ModbusTransport, state: PanelState, unit_id: int,
+        register_names: set[str] | None = None,
     ) -> None:
-        """Read alarm word registers and decode active alarm flags."""
-        rmap = self._register_map
+        """Read packed four-bit GenComm alarm condition codes."""
+        rmap = self._panel_register_maps.get(state.panel_id, self._register_map)
         active_alarms: list[str] = []
 
-        for alarm_name in ("alarm_word_1", "alarm_word_2", "alarm_word_3"):
-            reg = rmap.get(alarm_name)
-            if not reg or not reg.bits:
+        for alarm_name, reg in rmap.registers.items():
+            if not alarm_name.startswith("alarm_condition_"):
+                continue
+            if register_names is not None and alarm_name not in register_names:
+                continue
+            if not reg.fields:
                 continue
             raw = await self._read_register(transport, reg, unit_id)
             if raw is None:
                 continue
-            for bit_pos, alarm_label in reg.bits.items():
-                if raw & (1 << bit_pos):
-                    active_alarms.append(alarm_label)
+            for field in reg.fields:
+                condition = (raw >> int(field["shift"])) & int(field.get("mask", 15))
+                # GenComm conditions 2/3/4 are alarms. Code 10 is an active
+                # indication, so it is intentionally not treated as a fault.
+                if condition in {2, 3, 4}:
+                    severity = {2: "warning", 3: "shutdown", 4: "electrical_trip"}[condition]
+                    active_alarms.append(f"{field['name']}:{severity}")
 
         # Detect newly appeared / cleared alarms (for event logging)
         prev_alarms = set(state.active_alarms)
@@ -372,7 +367,10 @@ class ModbusGateway:
 
             if reg.is_32bit:
                 # High word first (big-endian pair)
-                return (values[0] << 16) | values[1]
+                raw = (values[0] << 16) | values[1]
+                if reg.data_type == "int32" and raw >= 0x80000000:
+                    raw -= 0x100000000
+                return raw
 
             raw = values[0]
             # Handle signed types
@@ -384,6 +382,31 @@ class ModbusGateway:
             return None
 
     # ── Command Writes ────────────────────────────────────────────────
+
+    async def _command_status(self, command_id: str, panel_id: str, command: str, status: str,
+                              triggered_by: str, reason: str = "", user_id: str | None = None,
+                              detail: str | None = None) -> None:
+        if not self._command_logger:
+            return
+        result = self._command_logger(
+            command_id=command_id, panel_id=panel_id, command=command, status=status,
+            triggered_by=triggered_by, reason=reason, user_id=user_id, detail=detail,
+        )
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def _reconcile_command_outcome(self, panel_id: str, state: PanelState) -> None:
+        pending = self._pending_commands.get(panel_id)
+        if not pending:
+            return
+        target = pending["target"]
+        age = (datetime.now(timezone.utc) - pending["acknowledged_at"]).total_seconds()
+        if state.engine_status == target:
+            await self._command_status(**pending["log"], status="confirmed", detail=f"Observed engine state: {target}")
+            self._pending_commands.pop(panel_id, None)
+        elif age >= 45:
+            await self._command_status(**pending["log"], status="unknown", detail=f"No physical {target} confirmation within 45 seconds")
+            self._pending_commands.pop(panel_id, None)
 
     async def _validate_safe_to_start(self, panel_id: str) -> tuple[bool, str]:
         """Check that starting this panel is safe (no faults)."""
@@ -405,44 +428,63 @@ class ModbusGateway:
         user_id: str | None = None,
         load_kw_at_decision: float | None = None,
         capacity_pct_at_decision: float | None = None,
+        command_id: str | None = None,
     ) -> tuple[bool, str]:
         """Send Remote Start to a panel, respecting cooldown.
 
         Returns (success, message).
         """
+        command_id = command_id or str(uuid.uuid4())
+        command_log = dict(command_id=command_id, panel_id=panel_id, command="remote_start",
+                           triggered_by=triggered_by, reason=reason, user_id=user_id)
+        await self._command_status(**command_log, status="requested")
         # Safety check
         safe_to_start, safe_msg = await self._validate_safe_to_start(panel_id)
         if not safe_to_start:
             logger.warning("Start blocked for %s: %s", panel_id, safe_msg)
+            await self._command_status(**command_log, status="rejected", detail=safe_msg)
             return False, safe_msg
 
         # Check cooldown
         cd_result = self._cooldown.check_start(panel_id)
         if not cd_result.allowed:
             logger.info("Start blocked by cooldown for %s: %s", panel_id, cd_result.reason)
+            await self._command_status(**command_log, status="rejected", detail=cd_result.reason)
             return False, cd_result.reason
 
-        reg = self._register_map.get("remote_start")
-        if not reg:
-            return False, "remote_start register not defined in register map"
+        adapter = self._adapters.get(panel_id)
+        command_write = adapter.command_write("remote_start") if adapter else None
+        if not command_write:
+            await self._command_status(**command_log, status="failed", detail="Command not supported")
+            return False, "remote_start is not supported by this controller profile"
 
         config = self._panel_configs.get(panel_id)
         if not config:
+            await self._command_status(**command_log, status="failed", detail="Panel not registered")
             return False, f"Panel {panel_id} not registered"
 
         transport = self._transports.get(panel_id)
         if not transport or not transport.is_connected:
+            await self._command_status(**command_log, status="failed", detail="Panel not connected")
             return False, f"Panel {panel_id} not connected"
 
         try:
-            await transport.write_coil(reg.address, True, config["unit_id"])
+            async with self._io_locks.setdefault(panel_id, asyncio.Lock()):
+                await transport.write_registers(
+                    command_write.address, list(command_write.values), config["unit_id"]
+                )
             self._cooldown.record_start(panel_id)
 
             state = self._states.get(panel_id)
             previous_state = state.engine_status if state else "unknown"
             if state:
                 state.last_command = "remote_start"
+                state.last_command_id = command_id
                 state.last_command_time = datetime.now(timezone.utc)
+            await self._command_status(**command_log, status="acknowledged", detail="Controller write acknowledged")
+            self._pending_commands[panel_id] = {
+                "target": "running", "acknowledged_at": datetime.now(timezone.utc), "log": command_log,
+            }
 
             await self._log_event(
                 panel_id=panel_id,
@@ -465,6 +507,7 @@ class ModbusGateway:
         except TransportError as exc:
             msg = f"Failed to send Remote Start to {panel_id}: {exc}"
             logger.error(msg)
+            await self._command_status(**command_log, status="unknown", detail=str(exc))
             return False, msg
 
     async def _validate_safe_to_stop(self, panel_id: str, triggered_by: str = "manual") -> tuple[bool, str]:
@@ -508,41 +551,60 @@ class ModbusGateway:
         user_id: str | None = None,
         load_kw_at_decision: float | None = None,
         capacity_pct_at_decision: float | None = None,
+        command_id: str | None = None,
     ) -> tuple[bool, str]:
         """Send Remote Stop to a panel, respecting cooldown and capacity guard."""
+        command_id = command_id or str(uuid.uuid4())
+        command_log = dict(command_id=command_id, panel_id=panel_id, command="remote_stop",
+                           triggered_by=triggered_by, reason=reason, user_id=user_id)
+        await self._command_status(**command_log, status="requested")
         # 1. Capacity guard check
         safe_to_stop, safe_msg = await self._validate_safe_to_stop(panel_id, triggered_by=triggered_by)
         if not safe_to_stop:
             logger.warning("Stop blocked for %s: %s", panel_id, safe_msg)
+            await self._command_status(**command_log, status="rejected", detail=safe_msg)
             return False, safe_msg
 
         # 2. Cooldown check
         cd_result = self._cooldown.check_stop(panel_id)
         if not cd_result.allowed:
             logger.info("Stop blocked by cooldown for %s: %s", panel_id, cd_result.reason)
+            await self._command_status(**command_log, status="rejected", detail=cd_result.reason)
             return False, cd_result.reason
 
-        reg = self._register_map.get("remote_stop")
-        if not reg:
-            return False, "remote_stop register not defined in register map"
+        adapter = self._adapters.get(panel_id)
+        command_write = adapter.command_write("remote_stop") if adapter else None
+        if not command_write:
+            await self._command_status(**command_log, status="failed", detail="Command not supported")
+            return False, "remote_stop is not supported by this controller profile"
 
         config = self._panel_configs.get(panel_id)
         if not config:
+            await self._command_status(**command_log, status="failed", detail="Panel not registered")
             return False, f"Panel {panel_id} not registered"
 
         transport = self._transports.get(panel_id)
         if not transport or not transport.is_connected:
+            await self._command_status(**command_log, status="failed", detail="Panel not connected")
             return False, f"Panel {panel_id} not connected"
 
         try:
-            await transport.write_coil(reg.address, True, config["unit_id"])
+            async with self._io_locks.setdefault(panel_id, asyncio.Lock()):
+                await transport.write_registers(
+                    command_write.address, list(command_write.values), config["unit_id"]
+                )
             self._cooldown.record_stop(panel_id)
 
             state = self._states.get(panel_id)
             previous_state = state.engine_status if state else "unknown"
             if state:
                 state.last_command = "remote_stop"
+                state.last_command_id = command_id
                 state.last_command_time = datetime.now(timezone.utc)
+            await self._command_status(**command_log, status="acknowledged", detail="Controller write acknowledged")
+            self._pending_commands[panel_id] = {
+                "target": "stopped", "acknowledged_at": datetime.now(timezone.utc), "log": command_log,
+            }
 
             await self._log_event(
                 panel_id=panel_id,
@@ -565,6 +627,7 @@ class ModbusGateway:
         except TransportError as exc:
             msg = f"Failed to send Remote Stop to {panel_id}: {exc}"
             logger.error(msg)
+            await self._command_status(**command_log, status="unknown", detail=str(exc))
             return False, msg
 
     async def write_power_setpoint(
@@ -574,22 +637,33 @@ class ModbusGateway:
         triggered_by: str = "manual",
         reason: str = "",
         user_id: str | None = None,
+        command_id: str | None = None,
     ) -> tuple[bool, str]:
         """Write a fixed-power kW setpoint to a panel."""
-        reg = self._register_map.get("fixed_power_setpoint_kw")
+        command_id = command_id or str(uuid.uuid4())
+        command_log = dict(command_id=command_id, panel_id=panel_id, command="set_power",
+                           triggered_by=triggered_by, reason=reason, user_id=user_id)
+        await self._command_status(**command_log, status="requested")
+        rmap = self._panel_register_maps.get(panel_id, self._register_map)
+        reg = rmap.get("fixed_power_setpoint_kw")
         if not reg:
+            await self._command_status(**command_log, status="failed", detail="Setpoint not supported")
             return False, "fixed_power_setpoint_kw register not defined"
 
         config = self._panel_configs.get(panel_id)
         if not config:
+            await self._command_status(**command_log, status="failed", detail="Panel not registered")
             return False, f"Panel {panel_id} not registered"
 
         transport = self._transports.get(panel_id)
         if not transport or not transport.is_connected:
+            await self._command_status(**command_log, status="failed", detail="Panel not connected")
             return False, f"Panel {panel_id} not connected"
 
         try:
-            await transport.write_register(reg.address, kw_pct, config["unit_id"])
+            async with self._io_locks.setdefault(panel_id, asyncio.Lock()):
+                await transport.write_register(reg.address, kw_pct, config["unit_id"])
+            await self._command_status(**command_log, status="confirmed", detail="Setpoint write acknowledged by controller")
 
             state = self._states.get(panel_id)
             previous_state = state.engine_status if state else "unknown"
@@ -611,6 +685,7 @@ class ModbusGateway:
         except TransportError as exc:
             msg = f"Failed to write setpoint to {panel_id}: {exc}"
             logger.error(msg)
+            await self._command_status(**command_log, status="unknown", detail=str(exc))
             return False, msg
 
     # ── Reconciliation (startup) ──────────────────────────────────────
@@ -666,19 +741,24 @@ class ModbusGateway:
         unit_id = config["unit_id"]
         results: dict[str, Any] = {}
 
-        for name, reg in self._register_map.registers.items():
-            if not reg.is_readable:
-                continue
-            raw = await self._read_register(transport, reg, unit_id)
-            scaled = raw * reg.scale if raw is not None else None
-            results[name] = {
-                "address": f"0x{reg.address:04X}",
-                "raw_value": raw,
-                "scaled_value": scaled,
-                "unit": reg.unit,
-                "type": reg.data_type,
-                "description": reg.description,
-            }
+        async with self._io_locks.setdefault(panel_id, asyncio.Lock()):
+            rmap = self._panel_register_maps.get(panel_id, self._register_map)
+            adapter = self._adapters.get(panel_id)
+            for name, reg in rmap.registers.items():
+                if not reg.is_readable:
+                    continue
+                raw = await self._read_register(transport, reg, unit_id)
+                scaled = adapter.decode_reading(reg, raw) if raw is not None and adapter else (
+                    raw * reg.scale if raw is not None else None
+                )
+                results[name] = {
+                    "address": f"0x{reg.address:04X}",
+                    "raw_value": raw,
+                    "scaled_value": scaled,
+                    "unit": reg.unit,
+                    "type": reg.data_type,
+                    "description": reg.description,
+                }
 
         return results
 

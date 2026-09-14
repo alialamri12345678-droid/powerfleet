@@ -51,6 +51,23 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    claimed_org = payload.get("organization_id")
+    if claimed_org and claimed_org != user.organization_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account access has changed; sign in again")
+    claimed_site = payload.get("site_id") or user.site_id
+    site = await session.get(Site, claimed_site)
+    # If the selected site was deleted, fall back to the account's current
+    # site. This is the only time database context supersedes session context.
+    if site is None and claimed_site != user.site_id:
+        claimed_site = user.site_id
+        site = await session.get(Site, claimed_site)
+    if site is None or site.organization_id != user.organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Site is not available to this customer")
+
+    # Site selection belongs to this token/session. Detaching prevents an API
+    # request from accidentally persisting another browser session's context.
+    session.sync_session.expunge(user)
+    user.site_id = claimed_site
     return user
 
 

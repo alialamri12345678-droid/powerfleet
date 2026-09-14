@@ -60,6 +60,14 @@ def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | None =
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
+def create_stream_token(data: dict[str, Any]) -> str:
+    """Create a short-lived credential intended only for a WebSocket URL."""
+    now = datetime.now(timezone.utc)
+    to_encode = data.copy()
+    to_encode.update({"exp": now + timedelta(minutes=2), "iat": now, "type": "stream"})
+    return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
 def decode_token(token: str) -> dict[str, Any] | None:
     """Decode and validate a JWT token, returning its payload or None."""
     try:

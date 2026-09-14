@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../api/client';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function AddSiteModal({ isOpen, onClose, onSiteCreated, initialData = null }) {
+  const { t } = useLocale();
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [timezone, setTimezone] = useState('UTC');
@@ -81,8 +83,8 @@ export function AddSiteModal({ isOpen, onClose, onSiteCreated, initialData = nul
         padding: '2rem',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '1.25rem' }}>
-          <h2 style={{ fontSize: '1.125rem', fontWeight: 600 }}>{initialData ? 'Edit Facility Site' : 'New Facility Site'}</h2>
-          <button type="button" onClick={onClose} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+          <h2 style={{ fontSize: '1.125rem', fontWeight: 600 }}>{initialData ? t('editSite') : t('newFacility')}</h2>
+          <button type="button" onClick={onClose} aria-label={t('close')} title={t('close')} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
             ✕
           </button>
         </div>
@@ -103,52 +105,46 @@ export function AddSiteModal({ isOpen, onClose, onSiteCreated, initialData = nul
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label className="form-label" htmlFor="site-name">Site / Facility Name</label>
+            <label className="form-label" htmlFor="site-name">{t('siteName')}</label>
             <input
               id="site-name"
               type="text"
               className="form-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Data Center - North Campus"
+              placeholder={t('siteName')}
               required
             />
           </div>
 
           <div className="form-group">
-            <label className="form-label" htmlFor="site-address">Physical Address</label>
+            <label className="form-label" htmlFor="site-address">{t('physicalAddress')}</label>
             <input
               id="site-address"
               type="text"
               className="form-input"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
-              placeholder="e.g. 500 Enterprise Way, Suite 10"
+              placeholder={t('physicalAddress')}
             />
           </div>
 
           <div className="form-group">
-            <label className="form-label" htmlFor="site-timezone">Site Timezone</label>
+            <label className="form-label" htmlFor="site-timezone">{t('siteTimezone')}</label>
             <select
               id="site-timezone"
               className="form-select"
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
             >
-              <option value="UTC">UTC (Universal Coordinated Time)</option>
-              <option value="Asia/Riyadh">Asia/Riyadh (AST UTC+3)</option>
-              <option value="Asia/Dubai">Asia/Dubai (GST UTC+4)</option>
-              <option value="America/New_York">America/New_York (Eastern)</option>
-              <option value="America/Chicago">America/Chicago (Central)</option>
-              <option value="America/Denver">America/Denver (Mountain)</option>
-              <option value="America/Los_Angeles">America/Los_Angeles (Pacific)</option>
-              <option value="Europe/London">Europe/London (GMT/BST)</option>
-              <option value="Asia/Singapore">Asia/Singapore (SGT)</option>
+              {['UTC', 'Asia/Riyadh', 'Asia/Dubai', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Europe/London', 'Asia/Singapore'].map((zone) => (
+                <option key={zone} value={zone}>{zone}</option>
+              ))}
             </select>
           </div>
 
           <div className="form-group" style={{ marginBottom: '1.75rem' }}>
-            <label className="form-label" htmlFor="site-max-parallel">Max Simultaneous Units (Optional Cap)</label>
+            <label className="form-label" htmlFor="site-max-parallel">{t('maxUnits')}</label>
             <input
               id="site-max-parallel"
               type="number"
@@ -157,14 +153,14 @@ export function AddSiteModal({ isOpen, onClose, onSiteCreated, initialData = nul
               className="form-input"
               value={maxParallelUnits}
               onChange={(e) => setMaxParallelUnits(e.target.value)}
-              placeholder="e.g. 4"
+              placeholder="4"
             />
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={submitting}>{t('cancel')}</button>
             <button type="submit" className="btn btn-primary" disabled={submitting}>
-              {submitting ? 'Saving...' : (initialData ? 'Save Changes' : 'Create Site')}
+              {submitting ? t('saving') : (initialData ? t('saveChanges') : t('createSite'))}
             </button>
           </div>
         </form>

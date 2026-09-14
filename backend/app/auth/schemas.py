@@ -18,6 +18,7 @@ class TokenResponse(BaseModel):
     site_id: str
     user_id: str
     full_name: str
+    organization_id: str
 
 
 class RefreshRequest(BaseModel):
@@ -30,6 +31,7 @@ class UserResponse(BaseModel):
     full_name: str
     role: Literal["customer"]
     site_id: str
+    organization_id: str
     created_at: datetime
 
     class Config:

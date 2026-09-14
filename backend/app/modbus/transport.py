@@ -58,6 +58,12 @@ class ModbusTransport(ABC):
     ) -> None:
         """Write a single holding register."""
 
+    @abstractmethod
+    async def write_registers(
+        self, address: int, values: list[int], unit: int
+    ) -> None:
+        """Atomically write consecutive holding registers with function 16."""
+
     @property
     @abstractmethod
     def is_connected(self) -> bool:
@@ -159,7 +165,11 @@ class TCPTransport(ModbusTransport):
             )
             self._check_response(resp, f"write_coil({address}, {value})")
             
-        await self._with_retry("write_coil", _do_write)
+        self._check_connected()
+        try:
+            await _do_write()
+        except (ModbusException, TransportError) as exc:
+            raise TransportError(f"write_coil outcome unknown: {exc}") from exc
 
     async def write_register(
         self, address: int, value: int, unit: int
@@ -170,7 +180,26 @@ class TCPTransport(ModbusTransport):
             )
             self._check_response(resp, f"write_register({address}, {value})")
             
-        await self._with_retry("write_register", _do_write)
+        self._check_connected()
+        try:
+            await _do_write()
+        except (ModbusException, TransportError) as exc:
+            raise TransportError(f"write_register outcome unknown: {exc}") from exc
+
+    async def write_registers(
+        self, address: int, values: list[int], unit: int
+    ) -> None:
+        async def _do_write():
+            resp = await self._client.write_registers(
+                address=address, values=values, slave=unit
+            )
+            self._check_response(resp, f"write_registers({address}, {values})")
+
+        self._check_connected()
+        try:
+            await _do_write()
+        except (ModbusException, TransportError) as exc:
+            raise TransportError(f"write_registers outcome unknown: {exc}") from exc
 
     @property
     def is_connected(self) -> bool:
@@ -251,7 +280,11 @@ class RTUTransport(ModbusTransport):
             )
             self._check_response(resp, f"write_coil({address}, {value})")
             
-        await self._with_retry("write_coil", _do_write)
+        self._check_connected()
+        try:
+            await _do_write()
+        except (ModbusException, TransportError) as exc:
+            raise TransportError(f"write_coil outcome unknown: {exc}") from exc
 
     async def write_register(
         self, address: int, value: int, unit: int
@@ -262,7 +295,26 @@ class RTUTransport(ModbusTransport):
             )
             self._check_response(resp, f"write_register({address}, {value})")
             
-        await self._with_retry("write_register", _do_write)
+        self._check_connected()
+        try:
+            await _do_write()
+        except (ModbusException, TransportError) as exc:
+            raise TransportError(f"write_register outcome unknown: {exc}") from exc
+
+    async def write_registers(
+        self, address: int, values: list[int], unit: int
+    ) -> None:
+        async def _do_write():
+            resp = await self._client.write_registers(
+                address=address, values=values, slave=unit
+            )
+            self._check_response(resp, f"write_registers({address}, {values})")
+
+        self._check_connected()
+        try:
+            await _do_write()
+        except (ModbusException, TransportError) as exc:
+            raise TransportError(f"write_registers outcome unknown: {exc}") from exc
 
     @property
     def is_connected(self) -> bool:

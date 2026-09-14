@@ -13,11 +13,21 @@ from app.auth.service import (
     create_refresh_token,
     decode_token,
     verify_password,
+    create_stream_token,
 )
 from app.db.session import get_session
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+@router.get("/stream-token")
+async def stream_token(current_user: Annotated[User, Depends(get_current_user)]):
+    return {"token": create_stream_token({
+        "sub": current_user.id,
+        "site_id": current_user.site_id,
+        "organization_id": current_user.organization_id,
+    })}
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -42,6 +52,7 @@ async def login(
         "role": user.role,
         "site_id": user.site_id,
         "email": user.email,
+        "organization_id": user.organization_id,
     }
     access_token = create_access_token(claims)
     refresh_token = create_refresh_token(claims)
@@ -53,6 +64,7 @@ async def login(
         site_id=user.site_id,
         user_id=user.id,
         full_name=user.full_name,
+        organization_id=user.organization_id,
     )
 
 
@@ -77,11 +89,18 @@ async def refresh_token(
             detail="User not found",
         )
 
+    requested_site_id = payload.get("site_id") or user.site_id
+    from app.models.site import Site
+    requested_site = await session.get(Site, requested_site_id)
+    if requested_site is None or requested_site.organization_id != user.organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Site is not available to this customer")
+
     claims = {
         "sub": user.id,
         "role": user.role,
-        "site_id": user.site_id,
+        "site_id": requested_site_id,
         "email": user.email,
+        "organization_id": user.organization_id,
     }
     new_access_token = create_access_token(claims)
     new_refresh_token = create_refresh_token(claims)
@@ -90,9 +109,10 @@ async def refresh_token(
         access_token=new_access_token,
         refresh_token=new_refresh_token,
         role=user.role,
-        site_id=user.site_id,
+        site_id=requested_site_id,
         user_id=user.id,
         full_name=user.full_name,
+        organization_id=user.organization_id,
     )
 
 

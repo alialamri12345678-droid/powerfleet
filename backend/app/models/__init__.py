@@ -13,6 +13,11 @@ from app.models.schedule_exception import ScheduleException
 from app.models.daily_priority import DailyPriority
 from app.models.release_threshold import ReleaseThreshold
 from app.models.start_threshold import StartThreshold
+from app.models.telemetry_sample import TelemetrySample
+from app.models.organization import Organization
+from app.models.command_record import CommandRecord
+from app.models.maintenance_record import MaintenanceRecord
+from app.models.gateway_lease import GatewayLease
 
 __all__ = [
     "Base",
@@ -31,5 +36,9 @@ __all__ = [
     "DailyPriority",
     "ReleaseThreshold",
     "StartThreshold",
+    "TelemetrySample",
+    "Organization",
+    "CommandRecord",
+    "MaintenanceRecord",
+    "GatewayLease",
 ]
-

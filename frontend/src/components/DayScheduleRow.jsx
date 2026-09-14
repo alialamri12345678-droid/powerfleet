@@ -1,26 +1,29 @@
 import React from 'react';
-
-const DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+import { useLocale } from '../i18n/LocaleContext';
 
 export function DayScheduleRow({ activeDays = [], todayIndex = 0 }) {
+  const { t, locale } = useLocale();
+  const dayKeys = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const displayIndexes = locale === 'ar' ? [5, 6, 0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5, 6];
   return (
     <div className="schedule-row">
-      <div className="schedule-row-label">Weekly Duty</div>
+      <div className="schedule-row-label">{t('weeklyDuty')}</div>
       <div className="days-cells">
-        {DAYS.map((letter, idx) => {
-          const isActive = activeDays.includes(idx);
-          const isToday = idx === todayIndex;
+        {displayIndexes.map((dayIndex) => {
+          const day = dayKeys[dayIndex];
+          const isActive = activeDays.includes(dayIndex);
+          const isToday = dayIndex === todayIndex;
           let cellClass = 'day-cell';
           if (isActive) cellClass += ' active-duty';
           if (isToday) cellClass += ' is-today';
 
           return (
             <div
-              key={idx}
+              key={dayIndex}
               className={cellClass}
-              title={`${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][idx]}: ${isActive ? 'On Duty' : 'Standby'}${isToday ? ' (Today)' : ''}`}
+              title={`${t(day)}: ${isActive ? t('onDuty') : t('standby')}${isToday ? ` (${t('today')})` : ''}`}
             >
-              {letter}
+              {locale === 'ar' ? t(day).slice(0, 2) : t(day).slice(0, 1)}
             </div>
           );
         })}

@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useAuth } from './AuthContext';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function LoginPage({ onLoginSuccess }) {
   const { login } = useAuth();
+  const { t, locale, setLocale } = useLocale();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
@@ -16,7 +18,7 @@ export function LoginPage({ onLoginSuccess }) {
       await login(email, password);
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
-      setError(err.message || 'Login failed');
+      setError(err.message || t('loginFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -39,12 +41,17 @@ export function LoginPage({ onLoginSuccess }) {
         maxWidth: '420px',
         width: '100%',
       }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
+          <button type="button" className="logout-btn" onClick={() => setLocale(locale === 'en' ? 'ar' : 'en')} aria-label={t('language')} title={t('language')}>
+            {locale === 'en' ? 'العربية' : 'English'}
+          </button>
+        </div>
         <div style={{ marginBottom: '1.75rem' }}>
           <h1 style={{ fontSize: '1.35rem', fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
             Power Fleet
           </h1>
           <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-            Sign in to access your facility power management portal
+            {t('signInSubtitle')}
           </p>
         </div>
 
@@ -64,7 +71,7 @@ export function LoginPage({ onLoginSuccess }) {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label className="form-label" htmlFor="email">Email</label>
+            <label className="form-label" htmlFor="email">{t('email')}</label>
             <input
               id="email"
               type="email"
@@ -77,7 +84,7 @@ export function LoginPage({ onLoginSuccess }) {
           </div>
 
           <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-            <label className="form-label" htmlFor="password">Password</label>
+            <label className="form-label" htmlFor="password">{t('password')}</label>
             <input
               id="password"
               type="password"
@@ -95,7 +102,7 @@ export function LoginPage({ onLoginSuccess }) {
             style={{ width: '100%', padding: '0.625rem' }}
             disabled={submitting}
           >
-            {submitting ? 'Signing in...' : 'Sign in'}
+            {submitting ? t('signingIn') : t('signIn')}
           </button>
         </form>
       </div>

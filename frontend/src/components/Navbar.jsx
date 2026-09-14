@@ -1,6 +1,7 @@
 import React from 'react';
 import { Plus } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function Navbar({
   activeTab,
@@ -11,6 +12,7 @@ export function Navbar({
   onOpenAddSite,
 }) {
   const { user, logout } = useAuth();
+  const { locale, setLocale, t } = useLocale();
 
   return (
     <header className="top-nav">
@@ -18,7 +20,7 @@ export function Navbar({
         <span className="brand-title">Power Fleet</span>
 
         {/* Site Selector Dropdown */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderLeft: '1px solid var(--border-subtle)', paddingLeft: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderInlineStart: '1px solid var(--border-subtle)', paddingInlineStart: '0.75rem' }}>
           <select
             className="form-select"
             style={{
@@ -50,10 +52,10 @@ export function Navbar({
               alignItems: 'center',
               gap: '0.25rem',
             }}
-            title="Add New Facility Site"
+            title={t('addFacilityTitle')}
           >
             <Plus size={13} />
-            New Site
+            {t('newSite')}
           </button>
         </div>
       </div>
@@ -64,28 +66,28 @@ export function Navbar({
           className={`nav-tab ${activeTab === 'dashboard' ? 'active' : ''}`}
           onClick={() => onSelectTab('dashboard')}
         >
-          Generators
+          {t('generators')}
         </button>
         <button
           type="button"
           className={`nav-tab ${activeTab === 'schedule' ? 'active' : ''}`}
           onClick={() => onSelectTab('schedule')}
         >
-          Duty Schedule
+          {t('schedule')}
         </button>
         <button
           type="button"
           className={`nav-tab ${activeTab === 'settings' ? 'active' : ''}`}
           onClick={() => onSelectTab('settings')}
         >
-          Rules & Thresholds
+          {t('rules')}
         </button>
         <button
           type="button"
           className={`nav-tab ${activeTab === 'reports' ? 'active' : ''}`}
           onClick={() => onSelectTab('reports')}
         >
-          Reports & Work Logs
+          {t('reports')}
         </button>
         <>
           <button
@@ -93,14 +95,14 @@ export function Navbar({
             className={`nav-tab ${activeTab === 'diagnostics' ? 'active' : ''}`}
             onClick={() => onSelectTab('diagnostics')}
           >
-            Diagnostics
+            {t('diagnostics')}
           </button>
           <button
             type="button"
             className={`nav-tab ${activeTab === 'overrides' ? 'active' : ''}`}
             onClick={() => onSelectTab('overrides')}
           >
-            Overrides
+            {t('overrides')}
           </button>
         </>
         <button
@@ -108,11 +110,14 @@ export function Navbar({
           className={`nav-tab ${activeTab === 'events' ? 'active' : ''}`}
           onClick={() => onSelectTab('events')}
         >
-          Audit Log
+          {t('audit')}
         </button>
       </nav>
 
       <div className="user-section">
+        <button type="button" className="logout-btn" onClick={() => setLocale(locale === 'en' ? 'ar' : 'en')} title={t('language')} aria-label={t('language')}>
+          {locale === 'en' ? 'العربية' : 'English'}
+        </button>
         <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
           {user?.full_name || user?.email}
         </span>
@@ -120,9 +125,9 @@ export function Navbar({
           type="button"
           className="logout-btn"
           onClick={logout}
-          title="Sign out"
+          title={t('signOut')}
         >
-          Sign out
+          {t('signOut')}
         </button>
       </div>
     </header>

@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { apiRequest } from '../api/client';
 import { GeneratorCard } from '../components/GeneratorCard';
 import { OverrideBanner } from '../components/OverrideBanner';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function DashboardPage({
   panelStates = {},
@@ -13,6 +14,7 @@ export function DashboardPage({
   onEditPanel,
   refreshKey,
 }) {
+  const { t, formatNumber } = useLocale();
   const [panels, setPanels] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [overrides, setOverrides] = useState([]);
@@ -20,7 +22,11 @@ export function DashboardPage({
   const [actionMessage, setActionMessage] = useState(null);
 
   // ISO day of week: Monday is 0, Sunday is 6
-  const todayIndex = (new Date().getDay() + 6) % 7;
+  const weekdayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  let siteWeekday = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short', timeZone: currentSite?.timezone || 'UTC',
+  }).format(new Date()).slice(0, 3);
+  const todayIndex = Math.max(0, weekdayNames.indexOf(siteWeekday));
 
   useEffect(() => {
     loadData();
@@ -50,7 +56,7 @@ export function DashboardPage({
         method: 'POST',
         body: JSON.stringify({ reason: 'Manual start from dashboard' }),
       });
-      setActionMessage({ type: 'success', text: res.message || 'Start command sent' });
+      setActionMessage({ type: 'success', text: t('startSent') });
       setTimeout(() => setActionMessage(null), 5000);
     } catch (err) {
       const msg = typeof err === 'string' ? err : (err?.message || JSON.stringify(err));
@@ -65,7 +71,7 @@ export function DashboardPage({
         method: 'POST',
         body: JSON.stringify({ reason: 'Manual stop from dashboard' }),
       });
-      setActionMessage({ type: 'success', text: res.message || 'Stop command sent' });
+      setActionMessage({ type: 'success', text: t('stopSent') });
       setTimeout(() => setActionMessage(null), 5000);
     } catch (err) {
       const msg = typeof err === 'string' ? err : (err?.message || JSON.stringify(err));
@@ -77,7 +83,7 @@ export function DashboardPage({
   const handleDeleteGenerator = async (panelId) => {
     try {
       await apiRequest(`/panels/${panelId}`, { method: 'DELETE' });
-      setActionMessage({ type: 'success', text: 'Generator decommissioned successfully.' });
+      setActionMessage({ type: 'success', text: t('generatorDeleted') });
       loadData();
       setTimeout(() => setActionMessage(null), 4000);
     } catch (err) {
@@ -113,9 +119,9 @@ export function DashboardPage({
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">{currentSite?.name || 'Generator Fleet'}</h1>
+          <h1 className="page-title">{currentSite?.name || t('generatorFleet')}</h1>
           <p className="page-subtitle">
-            {runningCount} of {panels.length} generators active &bull; Total output: <span className="tabular-nums" style={{ fontWeight: 600 }}>{Math.round(totalLiveKw)} kW</span> of <span className="tabular-nums">{totalCapacity} kW</span>
+            {t('fleetSummary', { running: formatNumber(runningCount), total: formatNumber(panels.length), output: formatNumber(Math.round(totalLiveKw)), capacity: formatNumber(totalCapacity) })}
           </p>
         </div>
 
@@ -128,7 +134,7 @@ export function DashboardPage({
             style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}
           >
             <Plus size={16} />
-            Add Generator
+            {t('addGenerator')}
           </button>
         )}
       </div>
@@ -155,7 +161,7 @@ export function DashboardPage({
 
       {loading ? (
         <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-          Loading generator status...
+          {t('loadingGenerators')}
         </div>
       ) : panels.length === 0 ? (
         <div style={{
@@ -166,7 +172,7 @@ export function DashboardPage({
           textAlign: 'center',
         }}>
           <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            No generators configured for this facility site yet.
+            {t('noGenerators')}
           </p>
           {onOpenAddGenerator && (
             <button
@@ -174,7 +180,7 @@ export function DashboardPage({
               className="btn btn-primary"
               onClick={onOpenAddGenerator}
             >
-              Add First Generator
+              {t('addFirstGenerator')}
             </button>
           )}
         </div>

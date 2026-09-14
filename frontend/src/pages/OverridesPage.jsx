@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { apiRequest } from '../api/client';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function OverridesPage() {
+  const { t, formatDate, formatTime } = useLocale();
   const [panels, setPanels] = useState([]);
   const [overrides, setOverrides] = useState([]);
   const [selectedPanelId, setSelectedPanelId] = useState('');
@@ -47,7 +49,7 @@ export function OverridesPage() {
           reason: reason || undefined,
         }),
       });
-      setMessage({ type: 'success', text: `Override command issued. Active for ${durationMinutes} minutes.` });
+      setMessage({ type: 'success', text: t('overrideIssued', { count: durationMinutes }) });
       setReason('');
       await loadData();
     } catch (err) {
@@ -60,7 +62,7 @@ export function OverridesPage() {
   const handleRelease = async (panelId) => {
     try {
       await apiRequest(`/diagnostics/panels/${panelId}/override`, { method: 'DELETE' });
-      setMessage({ type: 'success', text: 'Override released. Panel returned to automated duty.' });
+      setMessage({ type: 'success', text: t('overrideReleased') });
       await loadData();
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -71,9 +73,9 @@ export function OverridesPage() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Manual Overrides</h1>
+          <h1 className="page-title">{t('overridesTitle')}</h1>
           <p className="page-subtitle">
-            Force generator run states with mandatory expiration safeguards
+            {t('overridesSubtitle')}
           </p>
         </div>
       </div>
@@ -101,12 +103,12 @@ export function OverridesPage() {
           padding: '1.75rem',
         }}>
           <h2 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '1.25rem' }}>
-            Engage Manual Override
+            {t('engageOverride')}
           </h2>
 
           <form onSubmit={handleCreateOverride}>
             <div className="form-group">
-              <label className="form-label" htmlFor="override-panel-select">Target Generator</label>
+              <label className="form-label" htmlFor="override-panel-select">{t('targetGenerator')}</label>
               <select
                 id="override-panel-select"
                 className="form-select"
@@ -121,44 +123,44 @@ export function OverridesPage() {
             </div>
 
             <div className="form-group">
-              <label className="form-label" htmlFor="override-action-select">Commanded Action</label>
+              <label className="form-label" htmlFor="override-action-select">{t('commandedAction')}</label>
               <select
                 id="override-action-select"
                 className="form-select"
                 value={overrideType}
                 onChange={(e) => setOverrideType(e.target.value)}
               >
-                <option value="force_start">Force Start (Run Unit)</option>
-                <option value="force_stop">Force Stop (Suppress Unit)</option>
+                <option value="force_start">{t('forceStart')}</option>
+                <option value="force_stop">{t('forceStop')}</option>
               </select>
             </div>
 
             <div className="form-group">
-              <label className="form-label" htmlFor="override-duration-select">Auto-Expiry Duration (Mandatory)</label>
+              <label className="form-label" htmlFor="override-duration-select">{t('expiryDuration')}</label>
               <select
                 id="override-duration-select"
                 className="form-select"
                 value={durationMinutes}
                 onChange={(e) => setDurationMinutes(Number(e.target.value))}
               >
-                <option value="30">30 minutes</option>
-                <option value="60">1 hour</option>
-                <option value="120">2 hours</option>
-                <option value="240">4 hours (default)</option>
-                <option value="480">8 hours</option>
+                <option value="30">{t('minutes', { count: 30 })}</option>
+                <option value="60">{t('hour', { count: 1 })}</option>
+                <option value="120">{t('hours', { count: 2 })}</option>
+                <option value="240">{t('hours', { count: 4 })}</option>
+                <option value="480">{t('hours', { count: 8 })}</option>
               </select>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                Prevents manual overrides from silently suppressing schedules indefinitely.
+                {t('overrideHelp')}
               </p>
             </div>
 
             <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-              <label className="form-label" htmlFor="override-reason-input">Reason for Audit Log</label>
+              <label className="form-label" htmlFor="override-reason-input">{t('auditReason')}</label>
               <input
                 id="override-reason-input"
                 type="text"
                 className="form-input"
-                placeholder="e.g. Scheduled fuel filter maintenance"
+                placeholder={t('reasonPlaceholder')}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
               />
@@ -170,7 +172,7 @@ export function OverridesPage() {
               style={{ width: '100%' }}
               disabled={submitting || !selectedPanelId}
             >
-              {submitting ? 'Engaging...' : 'Engage Override'}
+              {submitting ? t('engaging') : t('engageOverride')}
             </button>
           </form>
         </div>
@@ -183,12 +185,12 @@ export function OverridesPage() {
           padding: '1.75rem',
         }}>
           <h2 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '1.25rem' }}>
-            Active Overrides ({overrides.length})
+            {t('activeOverrides', { count: overrides.length })}
           </h2>
 
           {overrides.length === 0 ? (
             <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-              No active overrides. All generators are following automated schedule and load rules.
+              {t('noOverrides')}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -216,17 +218,17 @@ export function OverridesPage() {
                         fontWeight: 600,
                         color: isForceStart ? 'var(--status-running)' : 'var(--status-alarm)',
                       }}>
-                        {isForceStart ? 'FORCE START' : 'FORCE STOP'}
+                        {isForceStart ? t('forceStartLabel') : t('forceStopLabel')}
                       </span>
                     </div>
 
                     <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-                      Expires at: <span className="tabular-nums">{expiresDate.toLocaleTimeString()}</span> ({expiresDate.toLocaleDateString()})
+                      {t('expiresAt')} <span className="tabular-nums">{formatTime(expiresDate)}</span> ({formatDate(expiresDate)})
                     </div>
 
                     {ov.reason && (
                       <div style={{ fontSize: '0.8125rem', color: 'var(--text-tertiary)' }}>
-                        Note: {ov.reason}
+                        {t('note')} {ov.reason}
                       </div>
                     )}
 
@@ -237,7 +239,7 @@ export function OverridesPage() {
                         style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem' }}
                         onClick={() => handleRelease(ov.panel_id)}
                       >
-                        Release Override
+                        {t('releaseOverride')}
                       </button>
                     </div>
                   </div>

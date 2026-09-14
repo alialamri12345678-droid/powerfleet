@@ -2,9 +2,12 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { apiRequest } from '../api/client';
 import { AddSiteModal } from '../components/AddSiteModal';
 import { useAuth } from '../auth/AuthContext';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function SettingsPage() {
   const { logout } = useAuth();
+  const { t, locale } = useLocale();
+  const displayDayIndexes = locale === 'ar' ? [5, 6, 0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5, 6];
   const [site, setSite] = useState(null);
   const [threshold, setThreshold] = useState(null);
   const [startPct, setStartPct] = useState(70);
@@ -79,7 +82,7 @@ export function SettingsPage() {
     if (stopPct >= startPct) {
       setMessage({
         type: 'error',
-        text: 'The stop threshold must be lower than the start threshold to prevent rapid engine cycling.',
+        text: t('thresholdValidation'),
       });
       setSaving(false);
       return;
@@ -94,7 +97,7 @@ export function SettingsPage() {
           dwell_seconds: dwellMinutes * 60,
         }),
       });
-      setMessage({ type: 'success', text: 'Load management thresholds updated successfully.' });
+      setMessage({ type: 'success', text: t('thresholdsSaved') });
       setTimeout(() => setMessage(null), 4000);
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -104,12 +107,12 @@ export function SettingsPage() {
   };
 
   const handleDeleteSite = async () => {
-    if (!window.confirm(`Are you sure you want to permanently delete the site "${site?.name}" and ALL its generators? This cannot be undone.`)) {
+    if (!window.confirm(t('deleteSiteConfirm', { name: site?.name }))) {
       return;
     }
     try {
       await apiRequest(`/sites/${site.id}`, { method: 'DELETE' });
-      alert('Site deleted successfully. You will be logged out to reset your session.');
+      alert(t('siteDeleted'));
       logout();
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -143,7 +146,7 @@ export function SettingsPage() {
     setSavingPriorities(true);
     setMessage(null);
 
-    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const dayNames = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
     const n = panels.length;
     for (let d = 0; d < 7; d++) {
       const dayItems = dailyPriorities.filter((p) => p.day_of_week === d);
@@ -152,7 +155,7 @@ export function SettingsPage() {
         if (p < 1 || p > n) {
           setMessage({
             type: 'error',
-            text: `Priority ${p} on ${dayNames[d]} exceeds the number of generators in the site (${n}).`,
+            text: t('invalidPriority', { priority: p, day: t(dayNames[d]), count: n }),
           });
           setSavingPriorities(false);
           return;
@@ -162,7 +165,7 @@ export function SettingsPage() {
       if (unique.size !== prios.length) {
         setMessage({
           type: 'error',
-          text: `Duplicate priority detected on ${dayNames[d]}. Each generator must have a unique priority from 1 to ${n}.`,
+          text: t('duplicatePriority', { day: t(dayNames[d]), count: n }),
         });
         setSavingPriorities(false);
         return;
@@ -174,7 +177,7 @@ export function SettingsPage() {
         method: 'POST',
         body: JSON.stringify({ priorities: dailyPriorities }),
       });
-      setMessage({ type: 'success', text: 'Daily backup priorities saved.' });
+      setMessage({ type: 'success', text: t('prioritiesSaved') });
       setTimeout(() => setMessage(null), 4000);
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -208,7 +211,7 @@ export function SettingsPage() {
         body: JSON.stringify(payload),
       });
       setReleaseThresholds(result);
-      setMessage({ type: 'success', text: 'Backup release thresholds saved.' });
+      setMessage({ type: 'success', text: t('releaseRulesSaved') });
       setTimeout(() => setMessage(null), 4000);
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -247,7 +250,7 @@ export function SettingsPage() {
         body: JSON.stringify(payload),
       });
       setStartThresholds(result);
-      setMessage({ type: 'success', text: 'Backup start thresholds saved.' });
+      setMessage({ type: 'success', text: t('startRulesSaved') });
       setTimeout(() => setMessage(null), 4000);
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -270,9 +273,9 @@ export function SettingsPage() {
     <div style={{ maxWidth: '680px' }}>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Settings</h1>
+          <h1 className="page-title">{t('settings')}</h1>
           <p className="page-subtitle">
-            Configure site properties and load management rules
+            {t('settingsSubtitle')}
           </p>
         </div>
       </div>
@@ -293,7 +296,7 @@ export function SettingsPage() {
 
       {loading ? (
         <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-          Loading settings...
+          {t('loadingSettings')}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -307,30 +310,30 @@ export function SettingsPage() {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
               <div>
-                <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>Facility Site Details</h2>
-                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Manage the core details for this installation.</p>
+                <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>{t('facilityDetails')}</h2>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>{t('facilityDetailsText')}</p>
               </div>
               <button
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => setIsEditSiteOpen(true)}
               >
-                Edit Details
+                {t('editDetails')}
               </button>
             </div>
             
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
               <div>
-                <label className="form-label" style={{ color: 'var(--text-secondary)' }}>Site Name</label>
+                <label className="form-label" style={{ color: 'var(--text-secondary)' }}>{t('siteName')}</label>
                 <div style={{ fontWeight: 500 }}>{site?.name}</div>
               </div>
               <div>
-                <label className="form-label" style={{ color: 'var(--text-secondary)' }}>Timezone</label>
+                <label className="form-label" style={{ color: 'var(--text-secondary)' }}>{t('timezone')}</label>
                 <div style={{ fontWeight: 500 }}>{site?.timezone}</div>
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label className="form-label" style={{ color: 'var(--text-secondary)' }}>Address / Location</label>
-                <div style={{ fontWeight: 500 }}>{site?.address || 'Not specified'}</div>
+                <label className="form-label" style={{ color: 'var(--text-secondary)' }}>{t('addressLocation')}</label>
+                <div style={{ fontWeight: 500 }}>{site?.address || t('notSpecified')}</div>
               </div>
             </div>
           </div>
@@ -345,27 +348,27 @@ export function SettingsPage() {
             gap: '2rem',
           }}>
             <div style={{ marginBottom: '-1rem' }}>
-              <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>Load Management Rules</h2>
-              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Configure automated backup assistance when facility power demand rises.</p>
+              <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>{t('loadRules')}</h2>
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>{t('loadRulesText')}</p>
             </div>
           {/* Start thresholds are now handled by the Start Thresholds Card */}
 
           {/* Dwell Time */}
           <div className="form-group">
-            <label className="form-label" htmlFor="dwell-select">Minimum run duration before releasing backup</label>
+            <label className="form-label" htmlFor="dwell-select">{t('minRunDuration')}</label>
             <select
               id="dwell-select"
               className="form-select"
               value={dwellMinutes}
               onChange={(e) => setDwellMinutes(Number(e.target.value))}
             >
-              <option value="1">1 minute</option>
-              <option value="2">2 minutes (recommended)</option>
-              <option value="5">5 minutes</option>
-              <option value="10">10 minutes</option>
+              <option value="1">{t('minute', { count: 1 })}</option>
+              <option value="2">{t('minutes', { count: 2 })} ({t('recommended')})</option>
+              <option value="5">{t('minutes', { count: 5 })}</option>
+              <option value="10">{t('minutes', { count: 10 })}</option>
             </select>
             <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-              Ensures the backup engine reaches stable operating temperature before being shut down.
+              {t('dwellHelp')}
             </p>
           </div>
 
@@ -375,7 +378,7 @@ export function SettingsPage() {
               className="btn btn-primary"
               disabled={saving}
             >
-              {saving ? 'Saving...' : 'Save Rules'}
+              {saving ? t('saving') : t('saveRules')}
             </button>
           </div>
         </form>
@@ -394,11 +397,10 @@ export function SettingsPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
               <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
-                Backup Start Thresholds
+                {t('startThresholds')}
               </h2>
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                Set the total facility load % at which each backup generator should be started.
-                The first backup (lowest priority number) is started first.
+                {t('startThresholdsText')}
               </p>
             </div>
             <button
@@ -406,7 +408,7 @@ export function SettingsPage() {
               onClick={handleSaveStartThresholds}
               disabled={savingStart}
             >
-              {savingStart ? 'Saving...' : 'Save Start Rules'}
+              {savingStart ? t('saving') : t('saveStartRules')}
             </button>
           </div>
 
@@ -428,7 +430,7 @@ export function SettingsPage() {
                   display: 'inline-block', flexShrink: 0,
                 }} />
                 <span style={{ color: 'var(--text-secondary)' }}>
-                  {st.panel_name || `Gen ${st.priority_order}`}: <strong>{st.start_pct}%</strong>
+                  {st.panel_name || t('generatorShort', { number: st.priority_order })}: <strong>{st.start_pct}%</strong>
                 </span>
               </div>
             ))}
@@ -448,11 +450,10 @@ export function SettingsPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
               <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
-                Backup Release Thresholds
+                {t('releaseThresholds')}
               </h2>
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                Set the total facility load % at which each backup generator should be released (stopped). 
-                The last backup started (highest priority number) is released first.
+                {t('releaseThresholdsText')}
               </p>
             </div>
             <button
@@ -460,7 +461,7 @@ export function SettingsPage() {
               onClick={handleSaveRelease}
               disabled={savingRelease}
             >
-              {savingRelease ? 'Saving...' : 'Save Release Rules'}
+              {savingRelease ? t('saving') : t('saveReleaseRules')}
             </button>
           </div>
 
@@ -483,7 +484,7 @@ export function SettingsPage() {
                   display: 'inline-block', flexShrink: 0,
                 }} />
                 <span style={{ color: 'var(--text-secondary)' }}>
-                  {rt.panel_name || `Gen ${rt.priority_order}`}: <strong>{rt.release_pct}%</strong>
+                  {rt.panel_name || t('generatorShort', { number: rt.priority_order })}: <strong>{rt.release_pct}%</strong>
                 </span>
               </div>
             ))}
@@ -501,9 +502,9 @@ export function SettingsPage() {
             gap: '2rem',
           }}>
             <div style={{ marginBottom: '-1rem' }}>
-              <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>Daily Backup Order</h2>
+              <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>{t('dailyBackupOrder')}</h2>
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                Set backup generator rotation priority per day.
+                {t('dailyBackupOrderText')}
               </p>
             </div>
             
@@ -511,9 +512,9 @@ export function SettingsPage() {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '180px' }}>Generator</th>
-                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
-                      <th key={d} style={{ textAlign: 'center' }}>{d}</th>
+                    <th style={{ width: '180px' }}>{t('generator')}</th>
+                    {displayDayIndexes.map((dayIndex) => (
+                      <th key={dayIndex} style={{ textAlign: 'center' }}>{t(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][dayIndex])}</th>
                     ))}
                   </tr>
                 </thead>
@@ -524,7 +525,7 @@ export function SettingsPage() {
                         <div style={{ fontWeight: 500 }}>{panel.name}</div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{panel.rated_kw} kW</div>
                       </td>
-                      {[0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => {
+                      {displayDayIndexes.map((dayOfWeek) => {
                         const prio = dailyPriorities.find(p => p.panel_id === panel.id && p.day_of_week === dayOfWeek)?.priority || 1;
                         return (
                           <td key={dayOfWeek} style={{ textAlign: 'center' }}>
@@ -563,7 +564,7 @@ export function SettingsPage() {
                 className="btn btn-primary"
                 disabled={savingPriorities}
               >
-                {savingPriorities ? 'Saving...' : 'Save Priorities'}
+                {savingPriorities ? t('saving') : t('savePriorities')}
               </button>
             </div>
         </form>
@@ -575,16 +576,16 @@ export function SettingsPage() {
           padding: '2rem',
           marginTop: '2rem'
         }}>
-          <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--status-alarm)', marginBottom: '0.5rem' }}>Danger Zone</h2>
+          <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--status-alarm)', marginBottom: '0.5rem' }}>{t('dangerZone')}</h2>
           <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-            Deleting a site will permanently erase all its generators, schedules, and historical data.
+            {t('dangerText')}
           </p>
           <button
             type="button"
             className="btn btn-danger"
             onClick={handleDeleteSite}
           >
-            Delete Site
+            {t('deleteSite')}
           </button>
         </div>
 
@@ -598,7 +599,7 @@ export function SettingsPage() {
           initialData={site}
           onSiteCreated={(updatedSite) => {
             setSite(updatedSite);
-            setMessage({ type: 'success', text: 'Site details updated successfully.' });
+            setMessage({ type: 'success', text: t('siteUpdated') });
           }}
         />
       )}
@@ -611,6 +612,7 @@ export function SettingsPage() {
  * Threshold Bar — horizontal bar with draggable indicators for each backup generator.
  */
 function ThresholdBar({ thresholds, valueKey, indicatorColors, onChange, type }) {
+  const { t: translate } = useLocale();
   const barRef = useRef(null);
   const [dragging, setDragging] = useState(null); // panel_id being dragged
 
@@ -677,6 +679,7 @@ function ThresholdBar({ thresholds, valueKey, indicatorColors, onChange, type })
       {/* Bar container */}
       <div
         ref={barRef}
+        dir="ltr"
         style={{
           position: 'relative',
           height: '48px',
@@ -783,7 +786,7 @@ function ThresholdBar({ thresholds, valueKey, indicatorColors, onChange, type })
             backgroundColor: '#FAFAFA'
           }}>
             <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-              {t.panel_name || `Gen ${t.priority_order}`}
+              {t.panel_name || translate('generatorShort', { number: t.priority_order })}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
               <input

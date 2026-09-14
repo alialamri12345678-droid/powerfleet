@@ -25,6 +25,8 @@ class RegisterDef:
     description: str = ""
     values: dict[int, str] = field(default_factory=dict)
     bits: dict[int, str] = field(default_factory=dict)
+    fields: list[dict[str, Any]] = field(default_factory=list)
+    profiles: tuple[str, ...] = ()
 
     @property
     def is_coil(self) -> bool:
@@ -83,6 +85,22 @@ class RegisterMap:
     def coil_registers(self) -> list[RegisterDef]:
         return [r for r in self.registers.values() if r.is_coil]
 
+    def for_profile(self, map_family: str) -> "RegisterMap":
+        """Return the common map plus points available for one controller family."""
+        registers = {
+            name: reg for name, reg in self.registers.items()
+            if not reg.profiles or map_family in reg.profiles
+        }
+        groups = [PollGroup(
+            name=group.name,
+            description=group.description,
+            register_names=[name for name in group.register_names if name in registers],
+            interval_ms=group.interval_ms,
+        ) for group in self.poll_groups]
+        result = RegisterMap(registers, groups)
+        result.version = self.version
+        return result
+
     @property
     def version(self) -> str:
         return self._version
@@ -134,6 +152,8 @@ def load_register_map(path: str | Path) -> RegisterMap:
             description=defn.get("description", ""),
             values=defn.get("values", {}),
             bits=defn.get("bits", {}),
+            fields=defn.get("fields", []),
+            profiles=tuple(defn.get("profiles", [])),
         )
 
     # Parse poll groups

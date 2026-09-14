@@ -23,7 +23,7 @@
   --bar-track: #EFEFEA;
 
   /* Typography */
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-sans: 'Inter', 'Noto Sans Arabic', Tahoma, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 * {
@@ -41,6 +41,15 @@ body {
   line-height: 1.5;
   min-height: 100vh;
 }
+
+html[dir="rtl"] body { text-align: right; }
+html[dir="rtl"] .nav-tab.active::after { left: 0; right: 0; }
+html[dir="rtl"] .data-table th,
+html[dir="rtl"] .data-table td { text-align: right; }
+html[dir="rtl"] .tabular-nums { direction: ltr; unicode-bidi: isolate; }
+html[dir="rtl"] input[type="email"],
+html[dir="rtl"] input[type="password"],
+html[dir="rtl"] input[type="time"] { direction: ltr; text-align: right; }
 
 /* Tabular numbers for non-jittering readouts */
 .tabular-nums,
@@ -375,6 +384,51 @@ body {
   color: var(--text-secondary);
 }
 
+.parameter-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-teal);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.parameter-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.parameter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.55rem 0.625rem;
+  background: #FAF9F7;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.parameter-row strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Buttons and Controls */
 .btn {
   font-family: inherit;
@@ -495,6 +549,22 @@ input[type="range"] {
   border-radius: 4px;
   background-color: #FFFFFF;
   color: var(--text-primary);
+  text-align: start;
+}
+
+@media (max-width: 1050px) {
+  .top-nav { align-items: flex-start; flex-wrap: wrap; gap: 0.75rem; padding: 0.875rem 1rem; }
+  .nav-links { order: 3; width: 100%; gap: 0.75rem; overflow-x: auto; }
+  .nav-tab { white-space: nowrap; }
+  .nav-tab.active::after { bottom: 0; }
+  .main-content { padding: 1.25rem; }
+}
+
+@media (max-width: 640px) {
+  .brand-section, .user-section { flex-wrap: wrap; }
+  .page-header { align-items: flex-start; flex-direction: column; gap: 1rem; }
+  .generator-grid { grid-template-columns: 1fr; }
+  .parameter-list { grid-template-columns: 1fr; }
 }
 
 .form-input:focus,

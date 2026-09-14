@@ -13,8 +13,10 @@ import { AddSiteModal } from './components/AddSiteModal';
 import { AddGeneratorModal } from './components/AddGeneratorModal';
 import { useWebSocketTelemetry } from './api/ws';
 import { apiRequest } from './api/client';
+import { LocaleProvider, useLocale } from './i18n/LocaleContext';
 
 function AppContent() {
+  const { t } = useLocale();
   const { user, loading } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sites, setSites] = useState([]);
@@ -53,13 +55,14 @@ function AppContent() {
       const response = await apiRequest(`/sites/switch/${siteId}`, { method: 'POST' });
       if (response.access_token) {
         localStorage.setItem('access_token', response.access_token);
+        if (response.refresh_token) localStorage.setItem('refresh_token', response.refresh_token);
         // Dispatch an event to notify hooks (like useWebSocketTelemetry) that the token changed
         window.dispatchEvent(new Event('auth_token_changed'));
       }
       setCurrentSite(response.site || response);
       setSiteRefreshKey((k) => k + 1);
     } catch (err) {
-      alert(`Failed to switch site: ${err.message}`);
+      alert(t('siteSwitchFailed', { message: err.message }));
     }
   };
 
@@ -81,7 +84,7 @@ function AppContent() {
         justifyContent: 'center',
         color: 'var(--text-secondary)',
       }}>
-        Starting portal...
+        {t('startingPortal')}
       </div>
     );
   }
@@ -143,8 +146,10 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <LocaleProvider>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </LocaleProvider>
   );
 }

@@ -23,7 +23,7 @@ async def list_sites(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> list[SiteResponse]:
     """List sites visible to the current user."""
-    stmt = select(Site).order_by(Site.name)
+    stmt = select(Site).where(Site.organization_id == user.organization_id).order_by(Site.name)
     result = await session.execute(stmt)
     sites = result.scalars().all()
     return [SiteResponse.model_validate(s) for s in sites]
@@ -36,7 +36,7 @@ async def get_current_site(
 ) -> SiteResponse:
     """Get the current user's active site details."""
     site = await session.get(Site, user.site_id)
-    if site is None:
+    if site is None or site.organization_id != user.organization_id:
         raise HTTPException(status_code=404, detail="Site not found")
     return SiteResponse.model_validate(site)
 
@@ -49,6 +49,7 @@ async def create_site(
 ) -> SiteResponse:
     """Create a new site facility. Automatically initializes default load thresholds."""
     new_site = Site(
+        organization_id=user.organization_id,
         name=body.name,
         address=body.address,
         timezone=body.timezone,
@@ -73,7 +74,7 @@ async def create_site(
 
 
 from typing import Any
-from app.auth.service import create_access_token
+from app.auth.service import create_access_token, create_refresh_token
 
 @router.post("/switch/{site_id}", response_model=dict[str, Any])
 async def switch_active_site(
@@ -83,23 +84,25 @@ async def switch_active_site(
 ) -> dict[str, Any]:
     """Switch the current user's active site context and return a new token."""
     target_site = await session.get(Site, site_id)
-    if target_site is None:
+    if target_site is None or target_site.organization_id != user.organization_id:
         raise HTTPException(status_code=404, detail="Target site not found")
 
-    user.site_id = site_id
-    await session.commit()
-    
-    # Generate new token with updated site_id
-    new_token = create_access_token({
+    # Site context is token/session-local, so two open browser sessions can use
+    # different facilities without changing each other's selected site.
+    claims = {
         "sub": str(user.id),
         "email": user.email,
         "role": user.role,
-        "site_id": str(user.site_id) if user.site_id else None,
-    })
+        "site_id": str(site_id),
+        "organization_id": user.organization_id,
+    }
+    new_token = create_access_token(claims)
+    new_refresh_token = create_refresh_token(claims)
     
     return {
         "site": SiteResponse.model_validate(target_site).model_dump(mode="json"),
-        "access_token": new_token
+        "access_token": new_token,
+        "refresh_token": new_refresh_token,
     }
 
 
@@ -112,7 +115,7 @@ async def update_site(
 ) -> SiteResponse:
     """Update any site's settings."""
     site = await session.get(Site, site_id)
-    if site is None:
+    if site is None or site.organization_id != user.organization_id:
         raise HTTPException(status_code=404, detail="Site not found")
 
     update_data = body.model_dump(exclude_unset=True)
@@ -134,12 +137,15 @@ async def delete_site(
 ):
     """Delete a site and all its generators."""
     site = await session.get(Site, site_id)
-    if site is None:
+    if site is None or site.organization_id != user.organization_id:
         raise HTTPException(status_code=404, detail="Site not found")
 
     # Accounts belong to the customer installation; deleting a facility must
     # not delete colleagues whose active site happens to be that facility.
-    stmt = select(Site).where(Site.id != site_id).limit(1)
+    stmt = select(Site).where(
+        Site.organization_id == user.organization_id,
+        Site.id != site_id,
+    ).limit(1)
     result = await session.execute(stmt)
     fallback_site = result.scalars().first()
 
@@ -148,7 +154,10 @@ async def delete_site(
             status_code=400,
             detail="Cannot delete the only existing site. Create another site first."
         )
-    await session.execute(update(User).where(User.site_id == site_id).values(site_id=fallback_site.id))
+    await session.execute(update(User).where(
+        User.organization_id == user.organization_id,
+        User.site_id == site_id,
+    ).values(site_id=fallback_site.id))
     panel_ids = (await session.execute(select(Panel.id).where(Panel.site_id == site_id))).scalars().all()
 
     # Delete the site (this cascades to panels, thresholds, events, overrides, etc. if ondelete="CASCADE" is set properly).

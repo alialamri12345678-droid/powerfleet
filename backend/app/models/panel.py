@@ -1,6 +1,6 @@
 """Panel model — one per DSE controller at a site."""
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String
+from sqlalchemy import Float, ForeignKey, Integer, JSON, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TenantMixin, TimestampMixin, generate_uuid
@@ -31,6 +31,10 @@ class Panel(Base, TenantMixin, TimestampMixin):
         Integer, nullable=False, default=1,
         comment="Modbus unit/slave ID",
     )
+    controller_profile: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="dse_86xx_mkii",
+        comment="Versioned controller adapter/profile selected for this generator",
+    )
 
     # Rated capacity
     rated_kw: Mapped[float] = mapped_column(
@@ -56,6 +60,8 @@ class Panel(Base, TenantMixin, TimestampMixin):
         nullable=False,
         comment="If True, panel is skipped in rotation and backup selection",
     )
+    maintenance_interval_hours: Mapped[float] = mapped_column(Float, nullable=False, default=250.0)
+    maintenance_limits: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
     # Relationships
     site = relationship("Site", back_populates="panels")

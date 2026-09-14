@@ -1,312 +1,156 @@
-# DSE 8620 MKII / 8610 MKII — Modbus Register Map
-# ===================================================
-# All addresses below are PLACEHOLDER values. Update them with the
-# official register numbers from DSE's Modbus documentation once
-# received from DSE support.
-#
-# Conventions:
-#   address   — Modbus register address (decimal or 0x hex)
-#   type      — uint16 | int16 | uint32 | int32 | float32 | bool (coil)
-#   access    — read | write | readwrite
-#   scale     — multiply raw value by this factor to get engineering units
-#   unit      — engineering unit label
-#   bit_mask  — for registers that pack multiple flags into one word
-#   description — human-readable purpose
-
-version: "1.0-placeholder"
+# Deep Sea Electronics GenComm register map
+# Source: GenComm standard 2.236 MF, revision 26 May 2022.
+# Addresses are zero-based: page_number * 256 + register_offset.
+version: "gencomm-2.236-mf-2022-05-26"
 
 registers:
-  # ── Status Registers ────────────────────────────────────────────────
-  engine_status:
-    address: 0x0100            # PLACEHOLDER — update from DSE docs
-    type: uint16
-    access: read
-    description: >
-      Engine status word.
-      0 = Stopped, 1 = Pre-heat, 2 = Cranking, 3 = Running,
-      4 = Cooling down, 5 = Stopped with fault
-    values:
-      0: stopped
-      1: preheat
-      2: cranking
-      3: running
-      4: cooldown
-      5: fault
+  manufacturer_code: {address: 768, type: uint16, access: read, description: "Page 3 offset 0: controller manufacturer code"}
+  model_number: {address: 769, type: uint16, access: read, description: "Page 3 offset 1: controller model number"}
+  control_mode: {address: 772, type: uint16, access: read, description: "Page 3 offset 4: current control mode"}
+  controller_status: {address: 774, type: uint16, access: read, description: "Page 3 offset 6: controller status flags"}
+  generator_state: {address: 786, type: uint16, access: read, description: "Page 3 offset 18: state machine 1 state; module-specific code"}
 
-  generator_status:
-    address: 0x0101            # PLACEHOLDER
-    type: uint16
-    access: read
-    description: >
-      Generator / alternator status.
-      0 = Off, 1 = Warming up, 2 = On load, 3 = Shutting down
+  oil_pressure: {address: 1024, type: uint16, scale: 0.01, unit: bar, access: read, description: "Page 4 offset 0: kPa normalized to bar"}
+  coolant_temperature: {address: 1025, type: int16, unit: "°C", access: read, description: "Page 4 offset 1"}
+  oil_temperature: {address: 1026, type: int16, unit: "°C", access: read, description: "Page 4 offset 2"}
+  fuel_level_percent: {address: 1027, type: uint16, unit: "%", access: read, description: "Page 4 offset 3"}
+  charge_alternator_voltage: {address: 1028, type: uint16, scale: 0.1, unit: V, access: read, description: "Page 4 offset 4"}
+  battery_voltage: {address: 1029, type: uint16, scale: 0.1, unit: V, access: read, description: "Page 4 offset 5"}
+  engine_speed: {address: 1030, type: uint16, unit: RPM, access: read, description: "Page 4 offset 6"}
+  frequency: {address: 1031, type: uint16, scale: 0.1, unit: Hz, access: read, description: "Page 4 offset 7"}
+  voltage_l1_n: {address: 1032, type: uint32, scale: 0.1, unit: V, access: read, description: "Page 4 offsets 8-9"}
+  voltage_l2_n: {address: 1034, type: uint32, scale: 0.1, unit: V, access: read, description: "Page 4 offsets 10-11"}
+  voltage_l3_n: {address: 1036, type: uint32, scale: 0.1, unit: V, access: read, description: "Page 4 offsets 12-13"}
+  voltage_l1_l2: {address: 1038, type: uint32, scale: 0.1, unit: V, access: read, description: "Page 4 offsets 14-15"}
+  voltage_l2_l3: {address: 1040, type: uint32, scale: 0.1, unit: V, access: read, description: "Page 4 offsets 16-17"}
+  voltage_l3_l1: {address: 1042, type: uint32, scale: 0.1, unit: V, access: read, description: "Page 4 offsets 18-19"}
+  current_l1: {address: 1044, type: uint32, scale: 0.1, unit: A, access: read, description: "Page 4 offsets 20-21"}
+  current_l2: {address: 1046, type: uint32, scale: 0.1, unit: A, access: read, description: "Page 4 offsets 22-23"}
+  current_l3: {address: 1048, type: uint32, scale: 0.1, unit: A, access: read, description: "Page 4 offsets 24-25"}
+  power_l1_kw: {address: 1052, type: int32, scale: 0.001, unit: kW, access: read, description: "Page 4 offsets 28-29: watts normalized to kW"}
+  power_l2_kw: {address: 1054, type: int32, scale: 0.001, unit: kW, access: read, description: "Page 4 offsets 30-31: watts normalized to kW"}
+  power_l3_kw: {address: 1056, type: int32, scale: 0.001, unit: kW, access: read, description: "Page 4 offsets 32-33: watts normalized to kW"}
 
-  generator_breaker:
-    address: 0x0102            # PLACEHOLDER
-    type: uint16
-    access: read
-    description: "Generator breaker status: 0=open, 1=closed"
+  load_kw: {address: 1536, type: int32, scale: 0.001, unit: kW, access: read, description: "Page 6 offsets 0-1: total watts normalized to kW"}
+  load_kva: {address: 1544, type: uint32, scale: 0.001, unit: kVA, access: read, description: "Page 6 offsets 8-9: total VA normalized to kVA"}
+  load_kvar: {address: 1552, type: int32, scale: 0.001, unit: kVAr, access: read, description: "Page 6 offsets 16-17: total VAr normalized to kVAr"}
+  power_factor: {address: 1557, type: int16, scale: 0.01, unit: PF, access: read, description: "Page 6 offset 21"}
+  load_kw_percent: {address: 1558, type: int16, scale: 0.1, unit: "%", access: read, description: "Page 6 offset 22"}
+  load_kvar_percent: {address: 1559, type: int16, scale: 0.1, unit: "%", access: read, description: "Page 6 offset 23"}
 
-  sync_status:
-    address: 0x0103            # PLACEHOLDER
-    type: uint16
-    access: read
-    description: "Synchronization status: 0=not synced, 1=synced"
-
-  # ── Electrical Measurements ─────────────────────────────────────────
-  load_kw:
-    address: 0x0110            # PLACEHOLDER
-    type: int16
-    scale: 0.1
-    unit: kW
-    access: read
-    description: "Active power output in kW (multiply raw by scale)"
-
-  load_kw_percent:
-    address: 0x0112            # PLACEHOLDER
-    type: uint16
-    unit: "%"
-    access: read
-    description: "Active power as percentage of rated kW"
-
-  load_kvar:
-    address: 0x0114            # PLACEHOLDER
-    type: int16
-    scale: 0.1
-    unit: kVAr
-    access: read
-    description: "Reactive power output in kVAr"
-
-  load_kvar_percent:
-    address: 0x0116            # PLACEHOLDER
-    type: uint16
-    unit: "%"
-    access: read
-    description: "Reactive power as percentage of rated kVAr"
-
-  load_kva:
-    address: 0x0118            # PLACEHOLDER
-    type: int16
-    scale: 0.1
-    unit: kVA
-    access: read
-    description: "Apparent power output in kVA"
-
-  voltage_l1_n:
-    address: 0x0120            # PLACEHOLDER
-    type: uint16
-    scale: 0.1
-    unit: V
-    access: read
-    description: "Phase L1-N voltage"
-
-  voltage_l2_n:
-    address: 0x0121            # PLACEHOLDER
-    type: uint16
-    scale: 0.1
-    unit: V
-    access: read
-
-  voltage_l3_n:
-    address: 0x0122            # PLACEHOLDER
-    type: uint16
-    scale: 0.1
-    unit: V
-    access: read
-
-  frequency:
-    address: 0x0130            # PLACEHOLDER
-    type: uint16
-    scale: 0.1
-    unit: Hz
-    access: read
-    description: "Generator frequency"
-
-  # ── Engine Parameters ───────────────────────────────────────────────
-  coolant_temperature:
-    address: 0x0140            # PLACEHOLDER
-    type: int16
-    unit: "°C"
-    access: read
-    description: "Engine coolant temperature"
-
-  oil_pressure:
-    address: 0x0142            # PLACEHOLDER
-    type: uint16
-    scale: 0.1
-    unit: bar
-    access: read
-    description: "Engine oil pressure"
-
-  battery_voltage:
-    address: 0x0144            # PLACEHOLDER
-    type: uint16
-    scale: 0.1
-    unit: V
-    access: read
-    description: "Starter battery voltage"
-
-  engine_speed:
-    address: 0x0146            # PLACEHOLDER
-    type: uint16
-    unit: RPM
-    access: read
-    description: "Engine speed"
-
-  # ── Accumulated Totals ──────────────────────────────────────────────
   run_hours:
-    address: 0x0150            # PLACEHOLDER
-    type: uint32               # Two consecutive 16-bit registers (high word first)
-    scale: 0.1
+    address: 1798
+    type: uint32
+    scale: 0.0002777777777777778
     unit: hours
     access: read
-    description: "Total engine run hours"
+    profiles: &accumulated [dse_4xxx, dse_60xx, dse_61xx_mkii, dse_61xx_mkiii, dse_63xx_6420, dse_71xx, dse_72xx_73xx_mki, dse_73xx_mkii, dse_74xx_mki, dse_74xx_mkii, dse_8xxx_mki, dse_86xx_mkii, dse_87xx_88xx, dse_exxx, dse_l40x]
+    description: "Page 7 offsets 6-7: seconds normalized to hours"
+  total_kwh: {address: 1800, type: uint32, scale: 0.1, unit: kWh, access: read, description: "Page 7 offsets 8-9"}
+  number_of_starts: {address: 1808, type: uint32, access: read, profiles: *accumulated, description: "Page 7 offsets 16-17"}
+  fuel_used_litres: {address: 1826, type: uint32, unit: L, access: read, profiles: *accumulated, description: "Page 7 offsets 34-35"}
 
-  total_kwh:
-    address: 0x0152            # PLACEHOLDER
-    type: uint32
-    unit: kWh
-    access: read
-    description: "Total energy produced"
+  standard_digital_outputs: {address: 3328, type: uint16, access: read, description: "Page 13 offset 0: standard two-bit output states; generator loading relay is bits 9-10"}
 
-  number_of_starts:
-    address: 0x0154            # PLACEHOLDER
-    type: uint32
-    access: read
-    description: "Total engine start count"
-
-  # ── Alarm / Fault Flags ─────────────────────────────────────────────
-  alarm_word_1:
-    address: 0x0200            # PLACEHOLDER
+  alarm_condition_01:
+    address: 2049
     type: uint16
     access: read
-    description: "Alarm flags word 1 — bitfield"
-    bits:
-      0: emergency_stop
-      1: low_oil_pressure
-      2: high_coolant_temp
-      3: low_coolant_temp
-      4: underspeed
-      5: overspeed
-      6: generator_over_frequency
-      7: generator_under_frequency
-
-  alarm_word_2:
-    address: 0x0201            # PLACEHOLDER
+    description: "Page 8 offset 1: packed GenComm alarm condition codes"
+    fields:
+      - {shift: 12, mask: 15, name: emergency_stop}
+      - {shift: 8, mask: 15, name: low_oil_pressure}
+      - {shift: 4, mask: 15, name: high_coolant_temperature}
+      - {shift: 0, mask: 15, name: high_oil_temperature}
+  alarm_condition_02:
+    address: 2050
     type: uint16
     access: read
-    description: "Alarm flags word 2 — bitfield"
-    bits:
-      0: generator_over_voltage
-      1: generator_under_voltage
-      2: battery_over_voltage
-      3: battery_under_voltage
-      4: overload_alarm
-      5: generator_short_circuit
-      6: mains_failure
-      7: generator_earth_fault
-
-  alarm_word_3:
-    address: 0x0202            # PLACEHOLDER
+    fields:
+      - {shift: 12, mask: 15, name: underspeed}
+      - {shift: 8, mask: 15, name: overspeed}
+      - {shift: 4, mask: 15, name: fail_to_start}
+      - {shift: 0, mask: 15, name: fail_to_stop}
+  alarm_condition_03:
+    address: 2051
     type: uint16
     access: read
-    description: "Alarm flags word 3 — bitfield"
-    bits:
-      0: fuel_level_low
-      1: fuel_level_high
-      2: charge_alternator_fail
-      3: fail_to_start
-      4: fail_to_stop
-      5: loss_of_speed_signal
-      6: low_fuel_pressure
-      7: high_fuel_pressure
-
-  # ── Control Coils (Writable) ────────────────────────────────────────
-  remote_start:
-    address: 0x0300            # PLACEHOLDER — update from DSE docs
-    type: bool                 # Modbus coil
-    access: write
-    description: >
-      Remote start command. Write TRUE (0xFF00) to assert the
-      remote start input on the panel. The panel handles all
-      synchronisation and load-sharing internally.
-
-  remote_stop:
-    address: 0x0301            # PLACEHOLDER
-    type: bool
-    access: write
-    description: >
-      Remote stop command. Write TRUE (0xFF00) to assert the
-      remote stop input. The panel manages its own cooling-down
-      sequence and breaker opening.
-
-  # ── Setpoint Registers (Writable, Optional) ─────────────────────────
-  fixed_power_setpoint_kw:
-    address: 0x0310            # PLACEHOLDER — may not be writable on all firmware
+    fields:
+      - {shift: 12, mask: 15, name: loss_of_speed_sensing}
+      - {shift: 8, mask: 15, name: generator_low_voltage}
+      - {shift: 4, mask: 15, name: generator_high_voltage}
+      - {shift: 0, mask: 15, name: generator_low_frequency}
+  alarm_condition_04:
+    address: 2052
     type: uint16
-    unit: "%"
-    access: readwrite
-    description: >
-      Fixed-power / base-load target as % of rated kW.
-      Only relevant when the panel is configured for fixed-power mode
-      (not load-sharing mode). Whether this register is writable depends
-      on DSE firmware — verify before using.
-
-  fixed_power_setpoint_kvar:
-    address: 0x0312            # PLACEHOLDER
+    access: read
+    fields:
+      - {shift: 12, mask: 15, name: generator_high_frequency}
+      - {shift: 8, mask: 15, name: generator_high_current}
+      - {shift: 4, mask: 15, name: generator_earth_fault}
+      - {shift: 0, mask: 15, name: generator_reverse_power}
+  alarm_condition_05:
+    address: 2053
     type: uint16
-    unit: "%"
-    access: readwrite
-    description: "Fixed reactive power target as % of rated kVAr"
+    access: read
+    fields:
+      - {shift: 12, mask: 15, name: air_flap}
+      - {shift: 8, mask: 15, name: oil_pressure_sender_fault}
+      - {shift: 4, mask: 15, name: coolant_temperature_sender_fault}
+      - {shift: 0, mask: 15, name: oil_temperature_sender_fault}
+  alarm_condition_06:
+    address: 2054
+    type: uint16
+    access: read
+    fields:
+      - {shift: 12, mask: 15, name: fuel_level_sender_fault}
+      - {shift: 8, mask: 15, name: magnetic_pickup_fault}
+      - {shift: 4, mask: 15, name: loss_of_ac_speed_signal}
+      - {shift: 0, mask: 15, name: charge_alternator_failure}
+  alarm_condition_07:
+    address: 2055
+    type: uint16
+    access: read
+    fields:
+      - {shift: 12, mask: 15, name: low_battery_voltage}
+      - {shift: 8, mask: 15, name: high_battery_voltage}
+      - {shift: 4, mask: 15, name: low_fuel_level}
+      - {shift: 0, mask: 15, name: high_fuel_level}
+  alarm_condition_08:
+    address: 2056
+    type: uint16
+    access: read
+    fields:
+      - {shift: 12, mask: 15, name: generator_failed_to_close}
+      - {shift: 8, mask: 15, name: mains_failed_to_close}
+      - {shift: 4, mask: 15, name: generator_failed_to_open}
+      - {shift: 0, mask: 15, name: mains_failed_to_open}
 
-# ── Polling Groups ─────────────────────────────────────────────────────
-# Define logical groups of registers to read together for efficiency.
-# The gateway reads each group in a single Modbus transaction.
+  system_control_key: {address: 4104, type: uint16, access: write, description: "Page 16 offset 8"}
+  system_control_key_complement: {address: 4105, type: uint16, access: write, description: "Page 16 offset 9"}
+
 poll_groups:
   status:
-    description: "Core status — polled every cycle"
-    registers:
-      - engine_status
-      - generator_status
-      - generator_breaker
-      - sync_status
-      - load_kw
-      - load_kw_percent
-      - load_kvar
-      - load_kvar_percent
+    description: "Core operating status and power"
+    registers: [control_mode, controller_status, generator_state, standard_digital_outputs, engine_speed, frequency, load_kw, load_kw_percent, load_kvar, load_kvar_percent]
     interval_ms: 1000
-
   electrical:
-    description: "Detailed electrical — polled less frequently"
-    registers:
-      - load_kva
-      - voltage_l1_n
-      - voltage_l2_n
-      - voltage_l3_n
-      - frequency
+    description: "Generator voltage, current and power quality"
+    registers: [load_kva, power_factor, voltage_l1_n, voltage_l2_n, voltage_l3_n, voltage_l1_l2, voltage_l2_l3, voltage_l3_l1, current_l1, current_l2, current_l3, power_l1_kw, power_l2_kw, power_l3_kw]
     interval_ms: 2000
-
   engine:
-    description: "Engine health parameters"
-    registers:
-      - coolant_temperature
-      - oil_pressure
-      - battery_voltage
-      - engine_speed
+    description: "Engine condition and consumables"
+    registers: [coolant_temperature, oil_temperature, oil_pressure, battery_voltage, charge_alternator_voltage, fuel_level_percent]
     interval_ms: 5000
-
+  identity:
+    description: "Controller identity"
+    registers: [manufacturer_code, model_number]
+    interval_ms: 60000
   totals:
-    description: "Accumulated counters — slow poll"
-    registers:
-      - run_hours
-      - total_kwh
-      - number_of_starts
+    description: "Accumulated maintenance counters"
+    registers: [run_hours, total_kwh, number_of_starts, fuel_used_litres]
     interval_ms: 30000
-
   alarms:
-    description: "Alarm flags — polled every cycle"
-    registers:
-      - alarm_word_1
-      - alarm_word_2
-      - alarm_word_3
+    description: "Packed GenComm alarm conditions"
+    registers: [alarm_condition_01, alarm_condition_02, alarm_condition_03, alarm_condition_04, alarm_condition_05, alarm_condition_06, alarm_condition_07, alarm_condition_08]
     interval_ms: 1000

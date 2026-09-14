@@ -17,7 +17,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Backend Modbus Gateway & API ───────────────────────────────────
+  # ── Horizontally scalable central API (never opens panel connections) ──
   backend:
     build:
       context: ./backend
@@ -35,8 +35,38 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"
       COMMAND_MIN_RUN_SECONDS: 30
       COMMAND_MIN_REST_SECONDS: 60
+      RUNTIME_MODE: api
+      TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-400}
     ports:
       - "8000:8000"
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Site gateway worker (exclusive database lease per facility) ────
+  gateway:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scada_user}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-scada}
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}"
+      RUNTIME_MODE: gateway
+      GATEWAY_OWNER_ID: ${GATEWAY_OWNER_ID:-site-gateway-1}
+      GATEWAY_LEASE_TTL_SECONDS: 30
+      MODBUS_POLL_INTERVAL_MS: ${MODBUS_POLL_INTERVAL_MS:-1000}
+      TELEMETRY_SAMPLE_INTERVAL_SECONDS: ${TELEMETRY_SAMPLE_INTERVAL_SECONDS:-15}
+      TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-400}
+      COMMAND_MIN_RUN_SECONDS: 30
+      COMMAND_MIN_REST_SECONDS: 60
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8001"]
     # For RS485 serial dongles on Raspberry Pi / Industrial PC:
     # devices:
     #   - "/dev/ttyUSB0:/dev/ttyUSB0"
@@ -48,7 +78,8 @@ services:
       dockerfile: Dockerfile
     restart: always
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "3000:3000"
 

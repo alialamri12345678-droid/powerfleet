@@ -14,7 +14,13 @@ from app.db.tenant import scoped_get, scoped_select
 from app.dependencies import get_current_user, get_gateway
 from app.models.override import Override
 from app.models.panel import Panel
+from app.models.telemetry_sample import TelemetrySample
 from app.modbus.gateway import ModbusGateway
+from app.services.commands import enqueue_command
+from app.modbus.register_map import load_register_map
+from app.config import settings
+from app.controllers import create_adapter, get_controller_profile
+from sqlalchemy import desc
 
 router = APIRouter(prefix="/diagnostics", tags=["Diagnostics"])
 
@@ -24,20 +30,28 @@ async def get_raw_registers(
     panel_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    gateway: Annotated[ModbusGateway, Depends(get_gateway)],
+    gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
 ) -> dict[str, Any]:
     """Read all registers defined in register_map.yaml for the specified panel."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
     if panel is None:
         raise HTTPException(status_code=404, detail="Panel not found")
 
-    reg_dump = await gateway.read_all_registers(panel_id)
-    state = gateway.states.get(panel_id)
+    latest = None
+    if gateway:
+        reg_dump = await gateway.read_all_registers(panel_id)
+        state = gateway.states.get(panel_id)
+    else:
+        latest = (await session.execute(scoped_select(TelemetrySample, user.site_id).where(
+            TelemetrySample.panel_id == panel_id
+        ).order_by(desc(TelemetrySample.recorded_at)).limit(1))).scalars().first()
+        reg_dump = latest.readings if latest else {}
+        state = None
 
     return {
         "panel_id": panel_id,
         "panel_name": panel.name,
-        "is_reachable": state.is_reachable if state else False,
+        "is_reachable": state.is_reachable if state else bool(latest and latest.is_reachable),
         "registers": reg_dump,
     }
 
@@ -47,15 +61,20 @@ async def get_panel_health(
     panel_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    gateway: Annotated[ModbusGateway, Depends(get_gateway)],
+    gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
 ) -> dict[str, Any]:
     """Get connection diagnostic telemetry for a panel."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
     if panel is None:
         raise HTTPException(status_code=404, detail="Panel not found")
 
-    state = gateway.states.get(panel_id)
+    state = gateway.states.get(panel_id) if gateway else None
+    latest = None
     if not state:
+        latest = (await session.execute(scoped_select(TelemetrySample, user.site_id).where(
+            TelemetrySample.panel_id == panel_id
+        ).order_by(desc(TelemetrySample.recorded_at)).limit(1))).scalars().first()
+    if not state and not latest:
         raise HTTPException(status_code=404, detail="Panel state unavailable")
 
     return {
@@ -64,12 +83,34 @@ async def get_panel_health(
         "transport_type": panel.transport_type,
         "address": panel.address,
         "unit_id": panel.unit_id,
-        "is_reachable": state.is_reachable,
-        "consecutive_errors": state.consecutive_errors,
-        "last_error": state.last_error,
-        "last_successful_poll": state.last_successful_poll.isoformat() if state.last_successful_poll else None,
-        "engine_status": state.engine_status,
-        "active_alarms": state.active_alarms,
+        "is_reachable": state.is_reachable if state else latest.is_reachable,
+        "consecutive_errors": state.consecutive_errors if state else 0,
+        "last_error": state.last_error if state else None,
+        "last_successful_poll": state.last_successful_poll.isoformat() if state and state.last_successful_poll else latest.recorded_at.isoformat(),
+        "engine_status": state.engine_status if state else latest.engine_status,
+        "active_alarms": state.active_alarms if state else [],
+    }
+
+
+@router.get("/panels/{panel_id}/controller-profile")
+async def controller_profile_status(
+    panel_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    panel = await scoped_get(session, Panel, panel_id, user.site_id)
+    if panel is None:
+        raise HTTPException(status_code=404, detail="Panel not found")
+    register_map = load_register_map(settings.register_map_path)
+    profile = get_controller_profile(panel.controller_profile)
+    profile_map = create_adapter(panel.controller_profile, register_map).register_map
+    commissioned = register_map.version.startswith("gencomm-")
+    return {
+        "profile": panel.controller_profile, "map_version": register_map.version,
+        "map_family": profile.map_family,
+        "commissioned": commissioned,
+        "readable_parameters": len(profile_map.readable_registers()),
+        "warning": "Verify model-specific optional points against the controller firmware during commissioning.",
     }
 
 
@@ -97,7 +138,7 @@ async def create_override(
     body: OverrideRequest,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    gateway: Annotated[ModbusGateway, Depends(get_gateway)],
+    gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
 ) -> OverrideResponse:
     """Force start or stop on a panel with mandatory expiration."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
@@ -128,7 +169,10 @@ async def create_override(
     # Issue the commanded action to the gateway first
     success = True
     msg = ""
-    if body.override_type == "force_start":
+    if gateway is None:
+        command = "remote_start" if body.override_type == "force_start" else "remote_stop"
+        await enqueue_command(panel, command, "override", override.reason or "Customer override", user.id)
+    elif body.override_type == "force_start":
         success, msg = await gateway.send_remote_start(
             panel_id=panel_id,
             triggered_by="override",

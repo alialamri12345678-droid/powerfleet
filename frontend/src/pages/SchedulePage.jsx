@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { apiRequest } from '../api/client';
+import { useLocale } from '../i18n/LocaleContext';
 
-const DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 export function SchedulePage() {
+  const { t, locale, formatNumber } = useLocale();
+  const displayDayIndexes = locale === 'ar' ? [5, 6, 0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5, 6];
   const [panels, setPanels] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -90,7 +93,7 @@ export function SchedulePage() {
         method: 'POST',
         body: JSON.stringify(payload),
       });
-      setMessage({ type: 'success', text: 'Schedule saved and synced with controller.' });
+      setMessage({ type: 'success', text: t('scheduleSaved') });
       setTimeout(() => setMessage(null), 4000);
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -110,11 +113,9 @@ export function SchedulePage() {
       });
       setSchedules(updated);
       const names = {
-        daily_rotation: 'Daily Rotation',
-        load_following_only: 'Load-Following Only',
-        manual_only: 'Manual Operation Only',
+        daily_rotation: t('dailyRotation'), load_following_only: t('loadFollowing'), manual_only: t('manualNoSchedule'),
       };
-      setMessage({ type: 'success', text: `Applied "${names[presetName]}" preset.` });
+      setMessage({ type: 'success', text: t('presetApplied', { name: names[presetName] }) });
       setTimeout(() => setMessage(null), 4000);
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -128,7 +129,7 @@ export function SchedulePage() {
   panels.forEach((p) => {
     const activeDaysCount = schedules.filter((s) => s.panel_id === p.id && s.is_active).length;
     if (activeDaysCount === 7) {
-      warnings.push(`${p.name} is scheduled 7 days a week with no rest days.`);
+      warnings.push(t('noRestWarning', { name: p.name }));
     }
   });
 
@@ -136,9 +137,9 @@ export function SchedulePage() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Duty Schedule</h1>
+          <h1 className="page-title">{t('schedule')}</h1>
           <p className="page-subtitle">
-            Choose which generators are on primary duty throughout the week &bull; Facility Timezone: <strong style={{ color: 'var(--text-primary)' }}>{site?.timezone || 'UTC'}</strong>
+            {t('scheduleSubtitle')} <strong style={{ color: 'var(--text-primary)' }}>{site?.timezone || 'UTC'}</strong>
           </p>
         </div>
         <button
@@ -147,7 +148,7 @@ export function SchedulePage() {
           onClick={handleSave}
           disabled={saving || loading}
         >
-          {saving ? 'Saving...' : 'Save Schedule'}
+          {saving ? t('saving') : t('saveSchedule')}
         </button>
       </div>
 
@@ -174,7 +175,7 @@ export function SchedulePage() {
         marginBottom: '1.5rem',
       }}>
         <div style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-          Quick Schedule Presets
+          {t('quickPresets')}
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button
@@ -182,21 +183,21 @@ export function SchedulePage() {
             className="btn btn-secondary"
             onClick={() => handleApplyPreset('daily_rotation')}
           >
-            Daily Rotation
+            {t('dailyRotation')}
           </button>
           <button
             type="button"
             className="btn btn-secondary"
             onClick={() => handleApplyPreset('load_following_only')}
           >
-            Load-Following Only
+            {t('loadFollowing')}
           </button>
           <button
             type="button"
             className="btn btn-secondary"
             onClick={() => handleApplyPreset('manual_only')}
           >
-            Manual (No Schedule)
+            {t('manualNoSchedule')}
           </button>
         </div>
       </div>
@@ -228,10 +229,10 @@ export function SchedulePage() {
         <table className="data-table" style={{ border: 'none' }}>
           <thead>
             <tr>
-              <th style={{ width: '220px' }}>Generator</th>
-              {DAY_LABELS.map((day, idx) => (
-                <th key={idx} style={{ textAlign: 'center' }}>
-                  {day.slice(0, 3)}
+              <th style={{ width: '220px' }}>{t('generator')}</th>
+              {displayDayIndexes.map((dayIndex) => (
+                <th key={dayIndex} style={{ textAlign: 'center' }}>
+                  {t(DAY_KEYS[dayIndex])}
                 </th>
               ))}
             </tr>
@@ -243,7 +244,7 @@ export function SchedulePage() {
                   <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{panel.name}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{panel.rated_kw} kW</div>
                 </td>
-                {DAY_LABELS.map((_, dayIdx) => {
+                {displayDayIndexes.map((dayIdx) => {
                   const schedule = getSchedule(panel.id, dayIdx);
                   const assigned = !!schedule;
                   return (
@@ -267,7 +268,7 @@ export function SchedulePage() {
                           marginBottom: assigned ? '0.5rem' : '0',
                         }}
                       >
-                        {assigned ? 'ON' : 'off'}
+                        {assigned ? t('on') : t('off')}
                       </button>
                       
                       {assigned && (
@@ -277,14 +278,14 @@ export function SchedulePage() {
                             value={schedule.start_time}
                             onChange={(e) => handleTimeChange(panel.id, dayIdx, 'start_time', e.target.value)}
                             style={{ width: '85px', fontSize: '0.7rem', padding: '2px', border: '1px solid var(--border-subtle)', borderRadius: '3px' }}
-                            title="Start Time"
+                            title={t('startTime')}
                           />
                           <input
                             type="time"
                             value={schedule.end_time}
                             onChange={(e) => handleTimeChange(panel.id, dayIdx, 'end_time', e.target.value)}
                             style={{ width: '85px', fontSize: '0.7rem', padding: '2px', border: '1px solid var(--border-subtle)', borderRadius: '3px' }}
-                            title="End Time"
+                            title={t('endTime')}
                           />
                         </div>
                       )}

@@ -1,7 +1,9 @@
 import React from 'react';
 import { AlertTriangle, WifiOff } from 'lucide-react';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function OverrideBanner({ activeOverrides = [], gatewayStatus = 'online', onClearOverride }) {
+  const { t } = useLocale();
   const isOffline = gatewayStatus === 'offline';
   const hasOverrides = activeOverrides.length > 0;
 
@@ -14,7 +16,7 @@ export function OverrideBanner({ activeOverrides = [], gatewayStatus = 'online',
           <div className="banner-left">
             <WifiOff size={16} />
             <span>
-              <strong>Gateway Offline</strong> — Live status disconnected. Controller safety and engine protections continue independently on-site.
+              <strong>{t('gatewayOffline')}</strong> — {t('gatewayOfflineText')}
             </span>
           </div>
         </div>
@@ -25,7 +27,7 @@ export function OverrideBanner({ activeOverrides = [], gatewayStatus = 'online',
           <div className="banner-left">
             <AlertTriangle size={16} />
             <span>
-              <strong>Manual Override Active</strong> — Automated weekly schedule is currently bypassed for {activeOverrides.length} generator{activeOverrides.length > 1 ? 's' : ''}.
+              <strong>{t('manualOverrideActive')}</strong> — {t('overrideBanner', { count: activeOverrides.length })}
             </span>
           </div>
           {onClearOverride && (
@@ -35,7 +37,7 @@ export function OverrideBanner({ activeOverrides = [], gatewayStatus = 'online',
               style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem' }}
               onClick={onClearOverride}
             >
-              View Overrides
+              {t('viewOverrides')}
             </button>
           )}
         </div>

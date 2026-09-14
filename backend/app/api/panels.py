@@ -1,6 +1,7 @@
 """Panels API router with site scoping and command dispatch."""
 
 import logging
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,6 +15,7 @@ from app.api.schemas import (
     PanelUpdate,
     DailyPriorityResponse,
     BulkDailyPriorityUpdate,
+    CommandRecordResponse,
 )
 from app.auth.models import User
 from app.db.session import get_session
@@ -26,12 +28,35 @@ from app.models.start_threshold import StartThreshold
 from app.models.threshold import Threshold
 from app.models.schedule_exception import ScheduleException
 from app.models.event import Event
+from app.models.command_record import CommandRecord
 from app.modbus.gateway import ModbusGateway
 from app.rules.engine import RulesEngine
+from app.services.commands import enqueue_command
+from app.controllers import list_controller_profiles as available_controller_profiles
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/panels", tags=["Panels"])
+
+
+@router.get("/commands/{command_id}", response_model=CommandRecordResponse)
+async def get_command_status(
+    command_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CommandRecordResponse:
+    command = await scoped_get(session, CommandRecord, command_id, user.site_id)
+    if command is None:
+        raise HTTPException(status_code=404, detail="Command not found")
+    return CommandRecordResponse.model_validate(command)
+
+
+@router.get("/controller-profiles/available")
+async def list_controller_profiles(
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Describe supported controller capabilities for configuration-driven UI."""
+    return available_controller_profiles()
 
 
 @router.get("", response_model=list[PanelResponse])
@@ -67,7 +92,7 @@ async def create_panel(
     body: PanelCreate,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    gateway: Annotated[ModbusGateway, Depends(get_gateway)],
+    gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
     rules_engine: Annotated[RulesEngine, Depends(get_rules_engine)],
 ) -> PanelResponse:
     """Create a new panel. Always assigns priority N+1 (last). Auto-seeds daily priorities and release threshold."""
@@ -82,6 +107,9 @@ async def create_panel(
         transport_type=body.transport_type,
         address=body.address,
         unit_id=body.unit_id,
+        controller_profile=body.controller_profile,
+        maintenance_interval_hours=body.maintenance_interval_hours,
+        maintenance_limits=body.maintenance_limits,
         rated_kw=body.rated_kw,
         rated_kvar=body.rated_kvar,
         priority=assigned_priority,
@@ -135,6 +163,7 @@ async def create_panel(
             transport_type=panel.transport_type,
             address=panel.address,
             unit_id=panel.unit_id,
+            controller_profile=panel.controller_profile,
             rated_kw=float(panel.rated_kw),
         )
 
@@ -373,7 +402,7 @@ async def manual_remote_start(
     body: ManualCommandRequest,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    gateway: Annotated[ModbusGateway, Depends(get_gateway)],
+    gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
 ):
     """Trigger a manual Remote Start command. Verified against cooldown and logged."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
@@ -381,18 +410,23 @@ async def manual_remote_start(
         raise HTTPException(status_code=404, detail="Panel not found")
 
     reason = f"{body.reason} (by {user.full_name or user.email})"
+    command_id = str(uuid.uuid4())
     
+    if gateway is None:
+        await enqueue_command(panel, "remote_start", "manual", reason, user.id, command_id=command_id)
+        return {"status": "queued", "message": "Start command queued for the site gateway", "command_id": command_id}
     success, msg = await gateway.send_remote_start(
         panel_id=panel_id,
         triggered_by="manual",
         reason=reason,
         user_id=user.id,
+        command_id=command_id,
     )
 
     if not success:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
 
-    return {"status": "success", "message": msg}
+    return {"status": "acknowledged", "message": msg, "command_id": command_id}
 
 
 @router.post("/{panel_id}/stop")
@@ -401,7 +435,7 @@ async def manual_remote_stop(
     body: ManualCommandRequest,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    gateway: Annotated[ModbusGateway, Depends(get_gateway)],
+    gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
 ):
     """Trigger a manual Remote Stop command. Verified against cooldown and logged."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
@@ -409,15 +443,20 @@ async def manual_remote_stop(
         raise HTTPException(status_code=404, detail="Panel not found")
 
     reason = f"{body.reason} (by {user.full_name or user.email})"
+    command_id = str(uuid.uuid4())
     
+    if gateway is None:
+        await enqueue_command(panel, "remote_stop", "manual", reason, user.id, command_id=command_id)
+        return {"status": "queued", "message": "Stop command queued for the site gateway", "command_id": command_id}
     success, msg = await gateway.send_remote_stop(
         panel_id=panel_id,
         triggered_by="manual",
         reason=reason,
         user_id=user.id,
+        command_id=command_id,
     )
 
     if not success:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
 
-    return {"status": "success", "message": msg}
+    return {"status": "acknowledged", "message": msg, "command_id": command_id}

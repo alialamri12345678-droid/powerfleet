@@ -1,9 +1,11 @@
 import React from 'react';
 import { AlertTriangle, WifiOff } from 'lucide-react';
+import { useLocale } from '../i18n/LocaleContext';
 
 export function StatusDot({ status, activeAlarms = [] }) {
+  const { t } = useLocale();
   let dotClass = 'idle';
-  let displayText = status || 'Unknown';
+  let displayText = t('unknown');
   let showAlarmIcon = false;
   let showOfflineIcon = false;
 
@@ -11,28 +13,28 @@ export function StatusDot({ status, activeAlarms = [] }) {
 
   if (lower === 'unreachable') {
     dotClass = 'unreachable';
-    displayText = 'Unreachable';
+    displayText = t('unreachable');
     showOfflineIcon = true;
   } else if (activeAlarms && activeAlarms.length > 0) {
     dotClass = 'alarm';
-    displayText = 'Alarm';
+    displayText = t('alarm');
     showAlarmIcon = true;
   } else if (lower === 'running') {
     dotClass = 'running';
-    displayText = 'Running';
+    displayText = t('running');
   } else if (lower === 'starting' || lower === 'preheat' || lower === 'cranking') {
     dotClass = 'warning';
-    displayText = 'Starting';
+    displayText = t('starting');
   } else if (lower === 'stopping' || lower === 'cooldown') {
     dotClass = 'warning';
-    displayText = 'Stopping';
+    displayText = t('stopping');
   } else if (lower === 'alarm' || lower === 'fault') {
     dotClass = 'alarm';
-    displayText = 'Alarm';
+    displayText = t('alarm');
     showAlarmIcon = true;
   } else {
     dotClass = 'idle';
-    displayText = 'Idle';
+    displayText = t('idle');
   }
 
   return (
