@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Activity, Zap, Clock, ShieldCheck, Wrench, AlertTriangle } from 'lucide-react';
+import { Download, Activity, Zap, Clock, ShieldCheck, Wrench, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { apiRequest } from '../api/client';
 import { useLocale } from '../i18n/LocaleContext';
 
 export function ReportsPage() {
-  const { t, translateText, formatCode, formatNumber, formatDate, formatTime } = useLocale();
+  const { t, locale, translateText, formatCode, formatNumber, formatDate, formatTime } = useLocale();
   const [report, setReport] = useState(null);
   const [period, setPeriod] = useState('30d');
   const [loading, setLoading] = useState(true);
@@ -12,6 +12,17 @@ export function ReportsPage() {
   const [error, setError] = useState(null);
   const [maintenance, setMaintenance] = useState(null);
   const [maintenanceLoading, setMaintenanceLoading] = useState(null);
+  const [completedServices, setCompletedServices] = useState([]);
+  const [serviceFormOpen, setServiceFormOpen] = useState(false);
+  const [serviceSubmitting, setServiceSubmitting] = useState(false);
+  const [serviceFeedback, setServiceFeedback] = useState(null);
+  const [alarmClearOpen, setAlarmClearOpen] = useState(null);
+  const [alarmClearReason, setAlarmClearReason] = useState('');
+  const [clearingAlarms, setClearingAlarms] = useState(false);
+  const [alarmFeedback, setAlarmFeedback] = useState(null);
+  const [serviceForm, setServiceForm] = useState({
+    service_date: '', run_hours: '', service_type: '', performed_by: '', notes: '',
+  });
 
   useEffect(() => {
     loadReport();
@@ -34,7 +45,7 @@ export function ReportsPage() {
     setExporting(true);
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`/api/reports/export?period=${period}`, {
+      const res = await fetch(`/api/reports/export?period=${period}&locale=${locale}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(t('exportFailed'));
@@ -44,7 +55,9 @@ export function ReportsPage() {
       const a = document.createElement('a');
       a.href = url;
       const dateStr = new Date().toISOString().slice(0, 10);
-      a.download = `generator_work_report_${period}_${dateStr}.csv`;
+      a.download = locale === 'ar'
+        ? `تقرير_عمل_المولدات_${period}_${dateStr}.csv`
+        : `generator_work_report_${period}_${dateStr}.csv`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -59,7 +72,17 @@ export function ReportsPage() {
   const loadMaintenance = async (panelId) => {
     setMaintenanceLoading(panelId);
     try {
-      setMaintenance(await apiRequest(`/reports/preventive-maintenance/${panelId}?period=${period}`));
+      const [maintenanceReport, serviceRecords] = await Promise.all([
+        apiRequest(`/reports/preventive-maintenance/${panelId}?period=${period}`),
+        apiRequest(`/reports/preventive-maintenance/${panelId}/records`),
+      ]);
+      setMaintenance(maintenanceReport);
+      setCompletedServices(serviceRecords);
+      setServiceFormOpen(false);
+      setServiceFeedback(null);
+      setAlarmClearOpen(null);
+      setAlarmClearReason('');
+      setAlarmFeedback(null);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -70,7 +93,7 @@ export function ReportsPage() {
   const exportMaintenance = async (panelId, generatorName) => {
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`/api/reports/preventive-maintenance/${panelId}/export?period=${period}`, {
+      const res = await fetch(`/api/reports/preventive-maintenance/${panelId}/export?period=${period}&locale=${locale}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(t('maintenanceExportFailed'));
@@ -78,7 +101,10 @@ export function ReportsPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${generatorName.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}_preventive_maintenance.csv`;
+      const safeName = generatorName.replace(/[^\p{L}\p{N}]+/gu, '_').toLowerCase();
+      a.download = locale === 'ar'
+        ? `${safeName}_الصيانة_الوقائية.csv`
+        : `${safeName}_preventive_maintenance.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -88,21 +114,97 @@ export function ReportsPage() {
     }
   };
 
-  const recordMaintenance = async () => {
-    const serviceDate = window.prompt(t('serviceDatePrompt'), new Date().toISOString().slice(0, 10));
-    if (!serviceDate) return;
-    const hours = window.prompt(t('serviceHoursPrompt'), maintenance.service.current_run_hours);
-    if (hours === null || Number.isNaN(Number(hours))) return;
-    const performedBy = window.prompt(t('serviceByPrompt'), '') || null;
-    const notes = window.prompt(t('serviceNotesPrompt'), '') || null;
+  const exportCompletedServices = async (panelId, generatorName) => {
     try {
-      await apiRequest(`/reports/preventive-maintenance/${maintenance.panel_id}/records`, {
-        method: 'POST',
-        body: JSON.stringify({ service_date: serviceDate, run_hours: Number(hours), service_type: t('routineService'), performed_by: performedBy, notes }),
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`/api/reports/preventive-maintenance/${panelId}/records/export?locale=${locale}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      await loadMaintenance(maintenance.panel_id);
+      if (!res.ok) throw new Error(t('serviceExportFailed'));
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const safeName = generatorName.replace(/[^\p{L}\p{N}]+/gu, '_').toLowerCase();
+      a.href = url;
+      a.download = locale === 'ar' ? `${safeName}_سجل_الصيانة.csv` : `${safeName}_service_history.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
     } catch (err) {
-      alert(err.message);
+      setServiceFeedback({ type: 'error', text: err.message });
+    }
+  };
+
+  const openServiceForm = () => {
+    setServiceForm({
+      service_date: new Date().toISOString().slice(0, 10),
+      run_hours: String(maintenance.service.current_run_hours ?? ''),
+      service_type: t('routineService'),
+      performed_by: '',
+      notes: '',
+    });
+    setServiceFeedback(null);
+    setServiceFormOpen(true);
+  };
+
+  const recordMaintenance = async (event) => {
+    event.preventDefault();
+    const runHours = Number(serviceForm.run_hours);
+    if (!serviceForm.service_date || !serviceForm.service_type.trim() || Number.isNaN(runHours) || runHours < 0) {
+      setServiceFeedback({ type: 'error', text: t('serviceValidationError') });
+      return;
+    }
+    setServiceSubmitting(true);
+    setServiceFeedback(null);
+    try {
+      const saved = await apiRequest(`/reports/preventive-maintenance/${maintenance.panel_id}/records`, {
+        method: 'POST',
+        body: JSON.stringify({
+          service_date: serviceForm.service_date,
+          run_hours: runHours,
+          service_type: serviceForm.service_type.trim(),
+          performed_by: serviceForm.performed_by.trim() || null,
+          notes: serviceForm.notes.trim() || null,
+        }),
+      });
+      const refreshed = await apiRequest(`/reports/preventive-maintenance/${maintenance.panel_id}?period=${period}`);
+      setMaintenance(refreshed);
+      setCompletedServices((records) => [saved, ...records]);
+      setServiceFormOpen(false);
+      setServiceFeedback({ type: 'success', text: t('serviceSaved') });
+    } catch (err) {
+      setServiceFeedback({ type: 'error', text: err.message });
+    } finally {
+      setServiceSubmitting(false);
+    }
+  };
+
+  const clearMaintenanceFinding = async (event, metric) => {
+    event.preventDefault();
+    if (alarmClearReason.trim().length < 3) {
+      setAlarmFeedback({ type: 'error', text: t('alarmClearReasonRequired') });
+      return;
+    }
+    setClearingAlarms(true);
+    setAlarmFeedback(null);
+    try {
+      await apiRequest(`/reports/preventive-maintenance/${maintenance.panel_id}/findings/${encodeURIComponent(metric)}/clear?period=${period}`, {
+        method: 'POST',
+        body: JSON.stringify({ resolution_note: alarmClearReason.trim() }),
+      });
+      const refreshed = await apiRequest(`/reports/preventive-maintenance/${maintenance.panel_id}?period=${period}`);
+      setMaintenance(refreshed);
+      setAlarmClearOpen(null);
+      setAlarmClearReason('');
+      setAlarmFeedback({
+        type: 'success',
+        text: t('findingClearedSuccess'),
+      });
+    } catch (err) {
+      setAlarmFeedback({ type: 'error', text: err.message });
+    } finally {
+      setClearingAlarms(false);
     }
   };
 
@@ -120,7 +222,7 @@ export function ReportsPage() {
           {/* Period Filter Buttons */}
           <div style={{
             display: 'flex',
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--card-bg)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             padding: '2px',
@@ -169,8 +271,8 @@ export function ReportsPage() {
           borderRadius: '4px',
           marginBottom: '1.5rem',
           fontSize: '0.875rem',
-          backgroundColor: '#FDF2F2',
-          border: '1px solid #F5C6C6',
+          backgroundColor: 'var(--danger-bg)',
+          border: '1px solid var(--danger-border)',
           color: 'var(--status-alarm)',
         }}>
           {error}
@@ -186,7 +288,7 @@ export function ReportsPage() {
           marginBottom: '2rem',
         }}>
           <div style={{
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--card-bg)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             padding: '1.25rem',
@@ -202,7 +304,7 @@ export function ReportsPage() {
           </div>
 
           <div style={{
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--card-bg)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             padding: '1.25rem',
@@ -222,7 +324,7 @@ export function ReportsPage() {
           </div>
 
           <div style={{
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--card-bg)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             padding: '1.25rem',
@@ -238,7 +340,7 @@ export function ReportsPage() {
           </div>
 
           <div style={{
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--card-bg)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             padding: '1.25rem',
@@ -257,7 +359,7 @@ export function ReportsPage() {
       {/* Generator Performance Breakdown */}
       {report && (
         <div style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--card-bg)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
           overflow: 'hidden',
@@ -320,7 +422,7 @@ export function ReportsPage() {
       )}
 
       {maintenance && (
-        <div style={{ background: '#FFFFFF', border: '1px solid var(--border-subtle)', borderRadius: '4px', padding: '1.25rem', marginBottom: '2rem' }}>
+        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-subtle)', borderRadius: '4px', padding: '1.25rem', marginBottom: '2rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
             <div>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontWeight: 600 }}><Wrench size={17} /> {t('preventiveMaintenance')} — {maintenance.generator_name}</div>
@@ -328,19 +430,61 @@ export function ReportsPage() {
                 {t('basedOnReadings', { count: formatNumber(maintenance.sample_count), period: period.toUpperCase() })}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button type="button" className="btn btn-secondary" onClick={recordMaintenance}>{t('recordService')}</button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-secondary" onClick={openServiceForm} style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}><Wrench size={15} /> {t('recordService')}</button>
               <button type="button" className="btn btn-primary" onClick={() => exportMaintenance(maintenance.panel_id, maintenance.generator_name)} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                 <Download size={15} /> {t('exportThisReport')}
               </button>
             </div>
           </div>
+          {alarmFeedback && (
+            <div style={{ padding: '0.75rem 0.9rem', marginBottom: '1rem', borderRadius: '4px', fontSize: '0.8125rem', background: alarmFeedback.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)', color: alarmFeedback.type === 'success' ? 'var(--status-running)' : 'var(--status-alarm)', border: `1px solid ${alarmFeedback.type === 'success' ? 'var(--success-border)' : 'var(--danger-border)'}` }}>
+              {alarmFeedback.text}
+            </div>
+          )}
+          {serviceFeedback && (
+            <div style={{ padding: '0.75rem 0.9rem', marginBottom: '1rem', borderRadius: '4px', fontSize: '0.8125rem', background: serviceFeedback.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)', color: serviceFeedback.type === 'success' ? 'var(--status-running)' : 'var(--status-alarm)', border: `1px solid ${serviceFeedback.type === 'success' ? 'var(--success-border)' : 'var(--danger-border)'}` }}>
+              {serviceFeedback.text}
+            </div>
+          )}
+          {serviceFormOpen && (
+            <form onSubmit={recordMaintenance} style={{ padding: '1rem', marginBottom: '1.25rem', background: 'var(--surface-subtle)', border: '1px solid var(--border-subtle)', borderRadius: '4px' }}>
+              <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{t('recordCompletedService')}</div>
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', marginBottom: '1rem' }}>{t('serviceFormHelp')}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '0.9rem' }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" htmlFor="service-date">{t('serviceDate')}</label>
+                  <input id="service-date" type="date" className="form-input" value={serviceForm.service_date} onChange={(e) => setServiceForm((form) => ({ ...form, service_date: e.target.value }))} required />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" htmlFor="service-hours">{t('runningHoursAtService')}</label>
+                  <input id="service-hours" type="number" min="0" step="0.1" className="form-input" value={serviceForm.run_hours} onChange={(e) => setServiceForm((form) => ({ ...form, run_hours: e.target.value }))} required />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" htmlFor="service-type">{t('serviceType')}</label>
+                  <input id="service-type" type="text" maxLength={100} className="form-input" value={serviceForm.service_type} onChange={(e) => setServiceForm((form) => ({ ...form, service_type: e.target.value }))} required />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" htmlFor="service-performer">{t('performedBy')}</label>
+                  <input id="service-performer" type="text" maxLength={200} className="form-input" value={serviceForm.performed_by} onChange={(e) => setServiceForm((form) => ({ ...form, performed_by: e.target.value }))} placeholder={t('performedByPlaceholder')} />
+                </div>
+              </div>
+              <div className="form-group" style={{ margin: '0.9rem 0 0' }}>
+                <label className="form-label" htmlFor="service-notes">{t('serviceNotes')}</label>
+                <textarea id="service-notes" maxLength={2000} className="form-input" value={serviceForm.notes} onChange={(e) => setServiceForm((form) => ({ ...form, notes: e.target.value }))} placeholder={t('serviceNotesPlaceholder')} style={{ minHeight: '88px', resize: 'vertical' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setServiceFormOpen(false)} disabled={serviceSubmitting}>{t('cancel')}</button>
+                <button type="submit" className="btn btn-primary" disabled={serviceSubmitting}>{serviceSubmitting ? t('savingService') : t('saveService')}</button>
+              </div>
+            </form>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
-            <div style={{ padding: '1rem', background: '#FAF9F7', borderRadius: '4px', textAlign: 'center' }}>
+            <div style={{ padding: '1rem', background: 'var(--surface-subtle)', borderRadius: '4px', textAlign: 'center' }}>
               <div style={{ fontSize: '2rem', fontWeight: 700, color: maintenance.condition_score >= 80 ? 'var(--status-running)' : 'var(--status-warning)' }}>{maintenance.condition_score}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{t('conditionScore')}</div>
             </div>
-            <div style={{ padding: '1rem', background: '#FAF9F7', borderRadius: '4px' }}>
+            <div style={{ padding: '1rem', background: 'var(--surface-subtle)', borderRadius: '4px' }}>
               <strong>{translateText(maintenance.condition)}</strong>
               <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
                 {t('nextService', { next: formatNumber(maintenance.service.next_service_hours), remaining: formatNumber(maintenance.service.hours_remaining) })}
@@ -348,17 +492,65 @@ export function ReportsPage() {
             </div>
           </div>
           {maintenance.findings.length === 0 ? (
-            <div style={{ padding: '0.9rem', background: '#EDF7F2', color: 'var(--status-running)', borderRadius: '4px' }}>{t('noWarning')}</div>
+            <div style={{ padding: '0.9rem', background: 'var(--success-bg)', color: 'var(--status-running)', borderRadius: '4px' }}>{t('noWarning')}</div>
           ) : maintenance.findings.map((finding, index) => (
             <div key={`${finding.metric}-${index}`} style={{ display: 'grid', gridTemplateColumns: '24px 1fr', gap: '0.75rem', padding: '0.9rem 0', borderTop: '1px solid var(--border-subtle)' }}>
               <AlertTriangle size={18} color={finding.severity === 'critical' ? 'var(--status-alarm)' : 'var(--status-warning)'} />
               <div>
-                <strong>{translateText(finding.title)}</strong>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                  <strong>{translateText(finding.title)}</strong>
+                  <button type="button" className="btn btn-secondary" onClick={() => { setAlarmClearOpen(finding.metric); setAlarmClearReason(''); setAlarmFeedback(null); }} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.35rem 0.7rem', fontSize: '0.75rem' }}>
+                    <CheckCircle2 size={14} color="var(--status-running)" /> {t('markFindingResolved')}
+                  </button>
+                </div>
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', marginTop: '0.2rem' }}>{translateText(finding.detail)}</div>
                 <div style={{ fontSize: '0.8125rem', marginTop: '0.35rem' }}>{t('recommendedAction')} {translateText(finding.recommendation)}</div>
+                {alarmClearOpen === finding.metric && (
+                  <form onSubmit={(event) => clearMaintenanceFinding(event, finding.metric)} style={{ padding: '0.85rem', marginTop: '0.8rem', background: 'var(--surface-subtle)', border: '1px solid var(--border-subtle)', borderRadius: '4px' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.8125rem' }}>{t('confirmFindingResolved')}</div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginTop: '0.25rem' }}>{t('findingResolutionHelp')}</div>
+                    <div className="form-group" style={{ margin: '0.75rem 0 0' }}>
+                      <label className="form-label" htmlFor={`finding-resolution-${finding.metric}`}>{t('alarmResolutionNote')}</label>
+                      <textarea id={`finding-resolution-${finding.metric}`} className="form-input" maxLength={1000} value={alarmClearReason} onChange={(event) => setAlarmClearReason(event.target.value)} placeholder={t('alarmResolutionPlaceholder')} style={{ minHeight: '68px', resize: 'vertical' }} required autoFocus />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
+                      <button type="button" className="btn btn-secondary" onClick={() => { setAlarmClearOpen(null); setAlarmClearReason(''); }} disabled={clearingAlarms}>{t('cancel')}</button>
+                      <button type="submit" className="btn btn-primary" disabled={clearingAlarms}>{clearingAlarms ? t('clearingMaintenanceAlarms') : t('confirmFindingClear')}</button>
+                    </div>
+                  </form>
+                )}
               </div>
             </div>
           ))}
+          <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '1.25rem', paddingTop: '1.25rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontWeight: 600 }}>{t('completedServiceHistory')}</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginTop: '0.2rem' }}>{t('completedServiceCount', { count: completedServices.length })}</div>
+              </div>
+              <button type="button" className="btn btn-secondary" onClick={() => exportCompletedServices(maintenance.panel_id, maintenance.generator_name)} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Download size={15} /> {t('exportServiceHistory')}
+              </button>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table" style={{ border: '1px solid var(--border-subtle)', minWidth: '760px' }}>
+                <thead><tr><th>{t('serviceDate')}</th><th>{t('runningHours')}</th><th>{t('serviceType')}</th><th>{t('performedBy')}</th><th>{t('serviceNotes')}</th></tr></thead>
+                <tbody>
+                  {completedServices.length === 0 ? (
+                    <tr><td colSpan={5} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-secondary)' }}>{t('noCompletedServices')}</td></tr>
+                  ) : completedServices.map((record) => (
+                    <tr key={record.id}>
+                      <td>{formatDate(`${record.service_date}T00:00:00`)}</td>
+                      <td className="tabular-nums">{formatNumber(record.run_hours, { maximumFractionDigits: 1 })}</td>
+                      <td>{record.service_type}</td>
+                      <td>{record.performed_by || '—'}</td>
+                      <td style={{ maxWidth: '360px', whiteSpace: 'normal' }}>{record.notes || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
           <div style={{ color: 'var(--text-tertiary)', fontSize: '0.72rem', marginTop: '1rem' }}>{translateText(maintenance.limitations[0])}</div>
         </div>
       )}
@@ -366,7 +558,7 @@ export function ReportsPage() {
       {/* Operational Work Log */}
       {report && (
         <div style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--card-bg)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
           overflow: 'hidden',

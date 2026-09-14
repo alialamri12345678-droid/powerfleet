@@ -311,19 +311,72 @@ async def test_reports_summary_and_csv_export(app, headers):
         exported = await ac.get("/reports/export?period=30d", headers=headers)
         assert exported.status_code == 200
         assert "Test Generator 1" in exported.text
+        arabic_export = await ac.get("/reports/export?period=30d&locale=ar", headers=headers)
+        assert arabic_export.status_code == 200
+        assert arabic_export.content.startswith(b"\xef\xbb\xbf")
+        assert "تقرير عمل أسطول المولدات" in arabic_export.text
+        assert "ملخص أداء وعمل المولدات" in arabic_export.text
+        assert "سجل نشاط العمل والمناوبة التشغيلية" in arabic_export.text
+
+
+@pytest.mark.asyncio
+async def test_audit_log_csv_export_and_filtered_clear_are_site_scoped(app, headers):
+    async with async_session_factory() as session:
+        session.add_all([
+            Event(id="event_command", site_id="site_1", panel_id="p1", event_type="command_sent",
+                  command="remote_start", value="ON", triggered_by="manual", reason="Test start"),
+            Event(id="event_alarm", site_id="site_1", panel_id="p1", event_type="alarm_active",
+                  value="low_oil_pressure", triggered_by="system", reason="Test alarm"),
+            Event(id="event_other_site", site_id="site_2", panel_id="other_panel", event_type="command_sent",
+                  command="remote_stop", value="ON", triggered_by="manual", reason="Private event"),
+        ])
+        await session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        exported = await ac.get("/events/export?event_type=command_sent", headers=headers)
+        assert exported.status_code == 200
+        assert "Applied Filters" in exported.text
+        assert "Event Type,command_sent" in exported.text
+        assert "Generator,All Units" in exported.text
+        assert "Test Generator 1" in exported.text
+        assert "Test start" in exported.text
+        assert "Private event" not in exported.text
+
+        arabic_export = await ac.get("/events/export?panel_id=p1&event_type=command_sent&locale=ar", headers=headers)
+        assert arabic_export.status_code == 200
+        assert "عوامل التصفية المطبقة" in arabic_export.text
+        assert "المولد,Test Generator 1" in arabic_export.text
+        assert "نوع الحدث,تم إرسال أمر" in arabic_export.text
+        assert "تشغيل عن بُعد" in arabic_export.text
+
+        cleared = await ac.delete("/events?event_type=command_sent", headers=headers)
+        assert cleared.status_code == 200
+        assert cleared.json()["deleted_count"] == 1
+        remaining = await ac.get("/events", headers=headers)
+        assert [event["id"] for event in remaining.json()] == ["event_alarm"]
+
+    async with async_session_factory() as session:
+        assert await session.get(Event, "event_other_site") is not None
 
 
 @pytest.mark.asyncio
 async def test_preventive_maintenance_report_is_per_generator_and_exportable(app, headers):
     async with async_session_factory() as session:
-        session.add(TelemetrySample(
-            id="sample_1", site_id="site_1", panel_id="p1", is_reachable=True,
-            engine_status="running", load_kw=475, load_kw_percent=95,
-            coolant_temperature=102, oil_pressure=1.5, battery_voltage=12.7,
-            fuel_level_percent=15, frequency=50, run_hours=249,
-            number_of_starts=80, active_alarm_count=0,
-            readings={"coolant_temperature": 102, "fuel_level_percent": 15},
-        ))
+        session.add_all([
+            TelemetrySample(
+                id="sample_1", site_id="site_1", panel_id="p1", is_reachable=True,
+                engine_status="running", load_kw=475, load_kw_percent=95,
+                coolant_temperature=102, oil_pressure=1.5, battery_voltage=12.7,
+                fuel_level_percent=15, frequency=50, run_hours=249,
+                number_of_starts=80, active_alarm_count=0,
+                readings={"coolant_temperature": 102, "fuel_level_percent": 15},
+            ),
+            Event(
+                id="maintenance_alarm", site_id="site_1", panel_id="p1",
+                event_type="alarm_active", value="low_oil_pressure:warning",
+                triggered_by="system", reason="Alarm activated",
+            ),
+        ])
         await session.commit()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.get("/reports/preventive-maintenance/p1?period=30d", headers=headers)
@@ -332,19 +385,103 @@ async def test_preventive_maintenance_report_is_per_generator_and_exportable(app
         assert body["generator_name"] == "Test Generator 1"
         assert body["sample_count"] == 1
         assert body["condition_score"] < 100
-        assert {f["metric"] for f in body["findings"]} >= {"coolant_temperature", "oil_pressure", "fuel_level_percent"}
+        assert {f["metric"] for f in body["findings"]} >= {
+            "coolant_temperature", "oil_pressure", "fuel_level_percent", "alarms",
+        }
         exported = await ac.get("/reports/preventive-maintenance/p1/export?period=30d", headers=headers)
         assert exported.status_code == 200
         assert "PREVENTIVE MAINTENANCE REPORT" in exported.text
         assert "Test Generator 1" in exported.text
+        arabic_export = await ac.get(
+            "/reports/preventive-maintenance/p1/export?period=30d&locale=ar", headers=headers
+        )
+        assert arabic_export.status_code == 200
+        assert arabic_export.content.startswith(b"\xef\xbb\xbf")
+        assert "تقرير الصيانة الوقائية" in arabic_export.text
+        assert "قراءات وحدة التحكم الحالية" in arabic_export.text
+        assert "درجة حرارة سائل التبريد" in arabic_export.text
+        assert "النتائج والتوصيات" in arabic_export.text
+        assert "افحص مستوى سائل التبريد" in arabic_export.text
+
+        cleared = await ac.post(
+            "/reports/preventive-maintenance/p1/alarms/clear",
+            headers=headers,
+            json={"resolution_note": "Engineer inspected oil system and verified normal pressure"},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json() == {"status": "cleared", "cleared_count": 1}
+        cleared_report = (
+            await ac.get("/reports/preventive-maintenance/p1?period=30d", headers=headers)
+        ).json()
+        assert "alarms" not in {finding["metric"] for finding in cleared_report["findings"]}
+        audit_events = (await ac.get("/events?event_type=alarm_cleared", headers=headers)).json()
+        assert audit_events[0]["command"] == "maintenance_clear"
+        assert "Engineer inspected oil system" in audit_events[0]["reason"]
+
+        for finding in cleared_report["findings"]:
+            resolved = await ac.post(
+                f"/reports/preventive-maintenance/p1/findings/{finding['metric']}/clear?period=30d",
+                headers=headers,
+                json={"resolution_note": f"Engineer checked and resolved {finding['metric']}"},
+            )
+            assert resolved.status_code == 200
+            assert resolved.json()["metric"] == finding["metric"]
+        healthy_report = (
+            await ac.get("/reports/preventive-maintenance/p1?period=30d", headers=headers)
+        ).json()
+        assert healthy_report["findings"] == []
+        assert healthy_report["condition_score"] == 100
+        assert healthy_report["condition"] == "No condition warning detected"
+        finding_clear_events = (await ac.get(
+            "/events?event_type=alarm_cleared&limit=100", headers=headers
+        )).json()
+        assert sum(event["command"] == "maintenance_finding_clear" for event in finding_clear_events) == len(cleared_report["findings"])
 
         recorded = await ac.post("/reports/preventive-maintenance/p1/records", headers=headers, json={
             "service_date": date.today().isoformat(), "run_hours": 249,
             "service_type": "250-hour service", "performed_by": "Service Team",
+            "notes": "Changed oil and filters",
         })
         assert recorded.status_code == 201
         refreshed = (await ac.get("/reports/preventive-maintenance/p1?period=30d", headers=headers)).json()
         assert refreshed["service"]["next_service_hours"] == 499
+
+        service_export = await ac.get(
+            "/reports/preventive-maintenance/p1/records/export", headers=headers
+        )
+        assert service_export.status_code == 200
+        assert service_export.content.startswith(b"\xef\xbb\xbf")
+        assert "COMPLETED SERVICE HISTORY" in service_export.text
+        assert "250-hour service" in service_export.text
+        assert "Changed oil and filters" in service_export.text
+
+        arabic_service_export = await ac.get(
+            "/reports/preventive-maintenance/p1/records/export?locale=ar", headers=headers
+        )
+        assert arabic_service_export.status_code == 200
+        assert "سجل الصيانة المكتملة" in arabic_service_export.text
+        assert "صيانة 250 ساعة" in arabic_service_export.text
+        assert "نفذت بواسطة" in arabic_service_export.text
+
+
+@pytest.mark.asyncio
+async def test_maintenance_alarm_clear_rejects_live_controller_fault(app, headers):
+    gateway = app.dependency_overrides[get_gateway]()
+    gateway.states["p1"] = Mock(active_alarms=["low_oil_pressure:shutdown"])
+    async with async_session_factory() as session:
+        session.add(Event(
+            id="live_alarm", site_id="site_1", panel_id="p1", event_type="alarm_active",
+            value="low_oil_pressure:shutdown", triggered_by="system",
+        ))
+        await session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/reports/preventive-maintenance/p1/alarms/clear",
+            headers=headers,
+            json={"resolution_note": "Checked by engineer"},
+        )
+        assert response.status_code == 409
+        assert "controller still reports active alarms" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

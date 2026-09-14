@@ -2,6 +2,7 @@
 
 import csv
 import io
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
     GeneratorWorkSummary,
+    MaintenanceAlarmClearRequest,
     PreventiveMaintenanceReport,
     MaintenanceRecordCreate,
     MaintenanceRecordResponse,
@@ -32,6 +34,160 @@ from app.db.tenant import scoped_get
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
+ARABIC_CODES = {
+    "command_sent": "تم إرسال أمر", "alarm_active": "إنذار نشط",
+    "alarm_cleared": "تم مسح الإنذار", "status_change": "تغير الحالة",
+    "override": "تجاوز", "system": "النظام", "remote_start": "تشغيل عن بُعد",
+    "remote_stop": "إيقاف عن بُعد", "force_start": "فرض التشغيل",
+    "force_stop": "فرض الإيقاف", "manual": "يدوي", "automatic": "آلي",
+    "schedule": "الجدول", "threshold": "حد الحمل", "dispatcher": "موزع الأحمال الآلي",
+    "running": "يعمل", "stopped": "متوقف", "idle": "خامل", "on": "تشغيل",
+    "off": "إيقاف", "success": "نجاح", "failed": "فشل", "critical": "حرج",
+    "warning": "تحذير", "information": "معلومات",
+    "emergency_stop": "إيقاف طارئ", "low_oil_pressure": "انخفاض ضغط الزيت",
+    "high_coolant_temperature": "ارتفاع حرارة سائل التبريد",
+    "high_coolant_temp": "ارتفاع حرارة سائل التبريد", "high_oil_temperature": "ارتفاع حرارة الزيت",
+    "underspeed": "انخفاض السرعة", "overspeed": "ارتفاع السرعة",
+    "fail_to_start": "فشل التشغيل", "fail_to_stop": "فشل الإيقاف",
+    "loss_of_speed_sensing": "فقدان إشارة السرعة", "loss_of_speed_signal": "فقدان إشارة السرعة",
+    "generator_low_voltage": "انخفاض جهد المولد", "generator_under_voltage": "انخفاض جهد المولد",
+    "generator_high_voltage": "ارتفاع جهد المولد", "generator_over_voltage": "ارتفاع جهد المولد",
+    "generator_low_frequency": "انخفاض تردد المولد", "generator_under_frequency": "انخفاض تردد المولد",
+    "generator_high_frequency": "ارتفاع تردد المولد", "generator_over_frequency": "ارتفاع تردد المولد",
+    "generator_high_current": "ارتفاع تيار المولد", "generator_earth_fault": "تسرب أرضي في المولد",
+    "generator_reverse_power": "قدرة عكسية للمولد", "air_flap": "بوابة الهواء",
+    "oil_pressure_sender_fault": "عطل حساس ضغط الزيت",
+    "coolant_temperature_sender_fault": "عطل حساس حرارة سائل التبريد",
+    "oil_temperature_sender_fault": "عطل حساس حرارة الزيت",
+    "fuel_level_sender_fault": "عطل حساس مستوى الوقود", "magnetic_pickup_fault": "عطل الحساس المغناطيسي",
+    "loss_of_ac_speed_signal": "فقدان إشارة سرعة التيار المتردد",
+    "charge_alternator_failure": "فشل مولد الشحن", "charge_alternator_fail": "فشل مولد الشحن",
+    "low_battery_voltage": "انخفاض جهد البطارية", "battery_under_voltage": "انخفاض جهد البطارية",
+    "high_battery_voltage": "ارتفاع جهد البطارية", "battery_over_voltage": "ارتفاع جهد البطارية",
+    "low_fuel_level": "انخفاض مستوى الوقود", "fuel_level_low": "انخفاض مستوى الوقود",
+    "high_fuel_level": "ارتفاع مستوى الوقود", "fuel_level_high": "ارتفاع مستوى الوقود",
+    "generator_failed_to_close": "فشل إغلاق قاطع المولد", "mains_failed_to_close": "فشل إغلاق قاطع الشبكة",
+    "generator_failed_to_open": "فشل فتح قاطع المولد", "mains_failed_to_open": "فشل فتح قاطع الشبكة",
+}
+
+ARABIC_METRICS = {
+    "manufacturer_code": "رمز الشركة المصنعة", "model_number": "رقم الطراز",
+    "control_mode": "وضع التحكم", "controller_status": "حالة وحدة التحكم",
+    "generator_state": "حالة المولد", "oil_pressure": "ضغط الزيت",
+    "coolant_temperature": "درجة حرارة سائل التبريد", "oil_temperature": "درجة حرارة الزيت",
+    "fuel_level_percent": "مستوى الوقود", "charge_alternator_voltage": "جهد مولد الشحن",
+    "battery_voltage": "جهد بطارية التشغيل", "engine_speed": "سرعة المحرك",
+    "frequency": "تردد المولد", "voltage_l1_n": "جهد L1-N",
+    "voltage_l2_n": "جهد L2-N", "voltage_l3_n": "جهد L3-N",
+    "voltage_l1_l2": "جهد L1-L2", "voltage_l2_l3": "جهد L2-L3",
+    "voltage_l3_l1": "جهد L3-L1", "current_l1": "تيار L1",
+    "current_l2": "تيار L2", "current_l3": "تيار L3",
+    "power_l1_kw": "قدرة L1", "power_l2_kw": "قدرة L2", "power_l3_kw": "قدرة L3",
+    "load_kw": "الحمل الفعلي", "load_kva": "الحمل الظاهري", "load_kvar": "الحمل غير الفعال",
+    "power_factor": "معامل القدرة", "load_kw_percent": "نسبة حمل المولد",
+    "load_kvar_percent": "نسبة الحمل غير الفعال", "run_hours": "ساعات التشغيل",
+    "total_kwh": "إجمالي الطاقة", "number_of_starts": "عدد مرات التشغيل",
+    "fuel_used_litres": "الوقود المستهلك", "active_alarm_count": "عدد الإنذارات النشطة",
+    "alarms": "الإنذارات",
+}
+
+ARABIC_MAINTENANCE_TEXT = {
+    "Attention required": "تتطلب الحالة اهتمامًا",
+    "Plan maintenance": "خطط للصيانة",
+    "No condition warning detected": "لم يتم اكتشاف تحذير في الحالة",
+    "Routine service interval is approaching": "موعد الصيانة الدورية يقترب",
+    "Routine service interval reached": "حان موعد الصيانة الدورية",
+    "Inspect coolant level, radiator airflow, hoses and thermostat before the next loaded run.": "افحص مستوى سائل التبريد وتدفق هواء المشع والخراطيم ومنظم الحرارة قبل التشغيل التالي تحت الحمل.",
+    "Verify oil level and grade, inspect for leaks, and confirm pressure with a calibrated instrument.": "تحقق من مستوى الزيت ودرجته وافحص التسربات وأكد الضغط باستخدام أداة معايرة.",
+    "Inspect terminals and charging system, then load-test the starter battery.": "افحص أقطاب البطارية ونظام الشحن ثم اختبر بطارية التشغيل تحت الحمل.",
+    "Refuel and inspect the tank, transfer pump, filters and level sender.": "أعد التزود بالوقود وافحص الخزان ومضخة النقل والمرشحات وحساس المستوى.",
+    "Check speed control/governor behavior and confirm the configured nominal frequency.": "افحص سلوك منظم السرعة وتأكد من التردد الاسمي المهيأ.",
+    "Review load sharing and capacity; inspect the unit if overload occurred.": "راجع تقاسم الحمل والقدرة وافحص الوحدة إذا حدث حمل زائد.",
+    "Review the alarm history and close out the underlying causes before relying on the unit.": "راجع سجل الإنذارات وعالج أسبابها الأساسية قبل الاعتماد على الوحدة.",
+    "Plan the manufacturer-prescribed service and record completion in the maintenance system.": "خطط للصيانة المقررة من الشركة المصنعة وسجّل اكتمالها في نظام الصيانة.",
+    "This report supports preventive maintenance planning; it does not replace inspection or the engine manufacturer's service schedule.": "يدعم هذا التقرير تخطيط الصيانة الوقائية ولا يغني عن الفحص أو جدول صيانة المحرك الخاص بالشركة المصنعة.",
+    "Accuracy depends on commissioned controller addresses, scaling and sensor calibration.": "تعتمد الدقة على صحة عناوين وحدة التحكم ومعاملات التحويل ومعايرة الحساسات عند التشغيل.",
+    "No configured limit was exceeded in available data.": "لم تتجاوز البيانات المتاحة أي حد مهيأ.",
+    "Continue routine inspection and servicing.": "استمر في الفحص والصيانة الدورية.",
+}
+
+ARABIC_SERVICE_KEYS = {
+    "current_run_hours": "ساعات التشغيل الحالية", "service_interval_hours": "فاصل الصيانة بالساعات",
+    "next_service_hours": "موعد الصيانة التالي بالساعات", "hours_remaining": "الساعات المتبقية",
+    "last_service_hours": "ساعات التشغيل عند آخر صيانة",
+}
+
+
+def _localize_code(value: str | None, locale: str) -> str:
+    if not value:
+        return ""
+    return ARABIC_CODES.get(value.lower(), value) if locale == "ar" else value
+
+
+def _localize_period(period: str, locale: str) -> str:
+    if locale != "ar":
+        return period.upper()
+    return {"today": "اليوم", "7d": "آخر 7 أيام", "30d": "آخر 30 يومًا", "all": "كل المدة"}[period]
+
+
+def _localize_metric(key: str, locale: str) -> str:
+    if locale == "ar":
+        return ARABIC_METRICS.get(key, key.replace("_", " "))
+    return key.replace("_", " ").title()
+
+
+def _localize_service_type(value: str, locale: str) -> str:
+    if locale != "ar":
+        return value
+    if value == "Routine service":
+        return "صيانة دورية"
+    match = re.match(r"^(\d+)-hour service$", value, re.IGNORECASE)
+    return f"صيانة {match.group(1)} ساعة" if match else value
+
+
+def _localize_maintenance_text(value: str, locale: str) -> str:
+    if locale != "ar":
+        return value
+    if value in ARABIC_MAINTENANCE_TEXT:
+        return ARABIC_MAINTENANCE_TEXT[value]
+    match = re.match(r"^(.+) requires attention$", value)
+    if match:
+        labels = {
+            "Coolant temperature": "درجة حرارة سائل التبريد", "Oil pressure": "ضغط الزيت",
+            "Starter battery voltage": "جهد بطارية التشغيل", "Fuel level": "مستوى الوقود",
+            "Generator frequency": "تردد المولد", "Generator load": "حمل المولد",
+        }
+        return f"{labels.get(match.group(1), match.group(1))} يتطلب الاهتمام"
+    match = re.match(r"^(Maximum|Minimum) (.+) (reached|was) ([\d.]+) (.+)\.$", value)
+    if match:
+        labels = {
+            "coolant temperature": "درجة حرارة سائل التبريد", "oil pressure": "ضغط الزيت",
+            "starter battery voltage": "جهد بطارية التشغيل", "fuel level": "مستوى الوقود",
+            "generator frequency": "تردد المولد", "generator load": "حمل المولد",
+        }
+        extreme = "أقصى" if match.group(1) == "Maximum" else "أدنى"
+        verb = "بلغ" if match.group(3) == "reached" else "كان"
+        return f"{extreme} {labels.get(match.group(2), match.group(2))} {verb} {match.group(4)} {match.group(5)}."
+    match = re.match(r"^(\d+) alarm occurrence\(s\) recorded$", value)
+    if match:
+        return f"تم تسجيل {match.group(1)} حالة إنذار"
+    match = re.match(r"^Approximately ([\d.]+) running hours remain to the ([\d.]+)-hour interval\.$", value)
+    if match:
+        return f"يتبقى نحو {match.group(1)} ساعة تشغيل حتى موعد الصيانة عند {match.group(2)} ساعة."
+    original_parts = value.split(", ")
+    alarm_parts = [_localize_code(part, locale) for part in original_parts]
+    if alarm_parts != original_parts:
+        return "، ".join(alarm_parts)
+    return value
+
+
+def _csv_response(output: io.StringIO, filename: str) -> Response:
+    return Response(
+        content=output.getvalue().encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 def _calculate_cutoff(period: str) -> datetime | None:
     now = datetime.now(timezone.utc)
@@ -42,6 +198,19 @@ def _calculate_cutoff(period: str) -> datetime | None:
     elif period == "30d":
         return now - timedelta(days=30)
     return None  # all time
+
+
+def _unresolved_alarm_events(events: list[Event]) -> list[Event]:
+    """Pair alarm activations with controller or engineer clearance events."""
+    unresolved: dict[str, Event] = {}
+    for event in events:
+        if event.event_type == "alarm_active":
+            unresolved[event.value or event.id] = event
+        elif event.event_type == "alarm_cleared" and event.command == "maintenance_clear":
+            unresolved.clear()
+        elif event.event_type == "alarm_cleared" and event.value:
+            unresolved.pop(event.value, None)
+    return list(unresolved.values())
 
 
 async def _build_maintenance_report(
@@ -57,19 +226,33 @@ async def _build_maintenance_report(
     cutoff = _calculate_cutoff(period)
     sample_stmt = scoped_select(TelemetrySample, user.site_id).where(TelemetrySample.panel_id == panel_id)
     event_stmt = scoped_select(Event, user.site_id).where(
-        Event.panel_id == panel_id, Event.event_type == "alarm_active"
+        Event.panel_id == panel_id, Event.event_type.in_(["alarm_active", "alarm_cleared"])
     )
     if cutoff:
         sample_stmt = sample_stmt.where(TelemetrySample.recorded_at >= cutoff)
         event_stmt = event_stmt.where(Event.timestamp >= cutoff)
     samples = (await session.execute(sample_stmt.order_by(TelemetrySample.recorded_at))).scalars().all()
-    alarms = (await session.execute(event_stmt.order_by(Event.timestamp))).scalars().all()
+    alarm_events = (await session.execute(event_stmt.order_by(Event.timestamp))).scalars().all()
+    alarms = _unresolved_alarm_events(list(alarm_events))
+    clear_stmt = scoped_select(Event, user.site_id).where(
+        Event.panel_id == panel_id,
+        Event.event_type == "alarm_cleared",
+        Event.command.in_(["maintenance_clear", "maintenance_finding_clear"]),
+    ).order_by(Event.timestamp)
+    clear_events = (await session.execute(clear_stmt)).scalars().all()
+    cleared_findings: dict[str, datetime] = {}
+    for clear_event in clear_events:
+        metric = "alarms" if clear_event.command == "maintenance_clear" else clear_event.value
+        if metric:
+            cleared_findings[metric] = clear_event.timestamp
     maintenance_stmt = scoped_select(MaintenanceRecord, user.site_id).where(
         MaintenanceRecord.panel_id == panel_id
     ).order_by(desc(MaintenanceRecord.service_date), desc(MaintenanceRecord.created_at)).limit(1)
     last_service = (await session.execute(maintenance_stmt)).scalars().first()
     live = gateway.states.get(panel_id) if gateway and hasattr(gateway, "states") else None
-    report = analyze_generator(panel, list(samples), list(alarms), live, last_service)
+    report = analyze_generator(
+        panel, list(samples), list(alarms), live, last_service, cleared_findings
+    )
     report.update({
         "period": period,
         "generated_at": datetime.now(timezone.utc),
@@ -112,6 +295,148 @@ async def record_completed_maintenance(
     return record
 
 
+@router.post("/preventive-maintenance/{panel_id}/alarms/clear")
+async def clear_maintenance_alarms(
+    panel_id: str,
+    body: MaintenanceAlarmClearRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
+) -> dict[str, int | str]:
+    """Close resolved alarms in maintenance analysis while preserving the audit trail."""
+    panel = await scoped_get(session, Panel, panel_id, user.site_id)
+    if panel is None:
+        raise HTTPException(status_code=404, detail="Generator not found")
+
+    state = gateway.states.get(panel_id) if gateway and hasattr(gateway, "states") else None
+    active_controller_alarms = list(getattr(state, "active_alarms", []) or [])
+    if active_controller_alarms:
+        raise HTTPException(
+            status_code=409,
+            detail="The controller still reports active alarms. Resolve or reset them at the controller before clearing the maintenance finding.",
+        )
+
+    alarm_stmt = scoped_select(Event, user.site_id).where(
+        Event.panel_id == panel_id,
+        Event.event_type.in_(["alarm_active", "alarm_cleared"]),
+    ).order_by(Event.timestamp)
+    alarm_events = (await session.execute(alarm_stmt)).scalars().all()
+    unresolved = _unresolved_alarm_events(list(alarm_events))
+    if not unresolved:
+        return {"status": "no_active_alarms", "cleared_count": 0}
+
+    session.add(Event(
+        site_id=user.site_id,
+        panel_id=panel_id,
+        event_type="alarm_cleared",
+        command="maintenance_clear",
+        value="all",
+        triggered_by="manual",
+        reason=body.resolution_note.strip(),
+        previous_state="alarm_active",
+        new_state="engineer_checked",
+        command_result="success",
+        user_id=user.id,
+    ))
+    await session.commit()
+    return {"status": "cleared", "cleared_count": len(unresolved)}
+
+
+@router.post("/preventive-maintenance/{panel_id}/findings/{metric}/clear")
+async def clear_maintenance_finding(
+    panel_id: str,
+    metric: str,
+    body: MaintenanceAlarmClearRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
+    period: Literal["all", "30d", "7d", "today"] = Query("30d"),
+) -> dict[str, str]:
+    """Resolve one engineer-checked maintenance finding and retain an audit event."""
+    panel = await scoped_get(session, Panel, panel_id, user.site_id)
+    if panel is None:
+        raise HTTPException(status_code=404, detail="Generator not found")
+
+    report = await _build_maintenance_report(panel_id, period, user, session, gateway)
+    finding = next((item for item in report.findings if item.metric == metric), None)
+    if finding is None:
+        return {"status": "already_clear", "metric": metric}
+
+    if metric == "alarms":
+        state = gateway.states.get(panel_id) if gateway and hasattr(gateway, "states") else None
+        if list(getattr(state, "active_alarms", []) or []):
+            raise HTTPException(
+                status_code=409,
+                detail="The controller still reports active alarms. Resolve or reset them at the controller before clearing the maintenance finding.",
+            )
+
+    session.add(Event(
+        site_id=user.site_id,
+        panel_id=panel_id,
+        event_type="alarm_cleared",
+        command="maintenance_finding_clear",
+        value=metric,
+        triggered_by="manual",
+        reason=body.resolution_note.strip(),
+        previous_state=finding.severity,
+        new_state="engineer_checked",
+        command_result="success",
+        user_id=user.id,
+    ))
+    await session.commit()
+    return {"status": "cleared", "metric": metric}
+
+
+@router.get("/preventive-maintenance/{panel_id}/records/export")
+async def export_maintenance_records_csv(
+    panel_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    locale: Literal["en", "ar"] = Query("en"),
+) -> Response:
+    """Export completed service history for one generator as localized CSV."""
+    panel = await scoped_get(session, Panel, panel_id, user.site_id)
+    if panel is None:
+        raise HTTPException(status_code=404, detail="Generator not found")
+    stmt = scoped_select(MaintenanceRecord, user.site_id).where(
+        MaintenanceRecord.panel_id == panel_id
+    ).order_by(desc(MaintenanceRecord.service_date), desc(MaintenanceRecord.created_at))
+    records = (await session.execute(stmt)).scalars().all()
+
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    if locale == "ar":
+        writer.writerow(["سجل الصيانة المكتملة"])
+        writer.writerow(["المولد", panel.name])
+        writer.writerow(["وقت التصدير (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")])
+        writer.writerow(["عدد السجلات", len(records)])
+        writer.writerow([])
+        writer.writerow([
+            "تاريخ الصيانة", "ساعات التشغيل", "نوع الصيانة", "نفذت بواسطة",
+            "الملاحظات", "وقت التسجيل (UTC)", "معرّف السجل", "معرّف المستخدم المسجل",
+        ])
+    else:
+        writer.writerow(["COMPLETED SERVICE HISTORY"])
+        writer.writerow(["Generator", panel.name])
+        writer.writerow(["Exported At (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")])
+        writer.writerow(["Record Count", len(records)])
+        writer.writerow([])
+        writer.writerow([
+            "Service Date", "Running Hours", "Service Type", "Performed By",
+            "Notes", "Recorded At (UTC)", "Record ID", "Recorded By User ID",
+        ])
+    for record in records:
+        writer.writerow([
+            record.service_date.isoformat(), record.run_hours,
+            _localize_service_type(record.service_type, locale), record.performed_by or "",
+            record.notes or "", record.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            record.id, record.recorded_by or "",
+        ])
+
+    filename = f"completed_services_{locale}_{panel_id[:8]}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
+    return _csv_response(output, filename)
+
+
 @router.get("/preventive-maintenance/{panel_id}", response_model=PreventiveMaintenanceReport)
 async def get_preventive_maintenance_report(
     panel_id: str,
@@ -131,50 +456,64 @@ async def export_preventive_maintenance_report(
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
     period: Literal["all", "30d", "7d", "today"] = Query("30d"),
+    locale: Literal["en", "ar"] = Query("en"),
 ):
     """Export a complete, per-generator preventive-maintenance CSV."""
     report = await _build_maintenance_report(panel_id, period, user, session, gateway)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["PREVENTIVE MAINTENANCE REPORT"])
-    writer.writerow(["Generator", report.generator_name])
-    writer.writerow(["Controller Profile", report.controller_profile])
-    writer.writerow(["Period", report.period.upper()])
-    writer.writerow(["Generated At (UTC)", report.generated_at.strftime("%Y-%m-%d %H:%M:%S")])
-    writer.writerow(["Condition", report.condition])
-    writer.writerow(["Condition Score", f"{report.condition_score}/100"])
-    writer.writerow(["History Samples", report.sample_count])
+    if locale == "ar":
+        writer.writerow(["تقرير الصيانة الوقائية"])
+        writer.writerow(["المولد", report.generator_name])
+        writer.writerow(["ملف وحدة التحكم", report.controller_profile])
+        writer.writerow(["الفترة", _localize_period(report.period, locale)])
+        writer.writerow(["وقت الإنشاء (UTC)", report.generated_at.strftime("%Y-%m-%d %H:%M:%S")])
+        writer.writerow(["الحالة", _localize_maintenance_text(report.condition, locale)])
+        writer.writerow(["مؤشر الحالة", f"{report.condition_score}/100"])
+        writer.writerow(["عدد القراءات التاريخية", report.sample_count])
+    else:
+        writer.writerow(["PREVENTIVE MAINTENANCE REPORT"])
+        writer.writerow(["Generator", report.generator_name])
+        writer.writerow(["Controller Profile", report.controller_profile])
+        writer.writerow(["Period", _localize_period(report.period, locale)])
+        writer.writerow(["Generated At (UTC)", report.generated_at.strftime("%Y-%m-%d %H:%M:%S")])
+        writer.writerow(["Condition", report.condition])
+        writer.writerow(["Condition Score", f"{report.condition_score}/100"])
+        writer.writerow(["History Samples", report.sample_count])
     writer.writerow([])
-    writer.writerow(["SERVICE PLANNING"])
+    writer.writerow(["تخطيط الصيانة" if locale == "ar" else "SERVICE PLANNING"])
     for key, value in report.service.items():
-        writer.writerow([key.replace("_", " ").title(), value])
+        writer.writerow([ARABIC_SERVICE_KEYS.get(key, key.replace("_", " ")) if locale == "ar" else key.replace("_", " ").title(), value])
     writer.writerow([])
-    writer.writerow(["CURRENT CONTROLLER READINGS"])
-    writer.writerow(["Parameter", "Value", "Unit"])
+    writer.writerow(["قراءات وحدة التحكم الحالية" if locale == "ar" else "CURRENT CONTROLLER READINGS"])
+    writer.writerow(["المعامل", "القيمة", "الوحدة"] if locale == "ar" else ["Parameter", "Value", "Unit"])
     for key, value in sorted(report.current_readings.items()):
-        writer.writerow([key.replace("_", " ").title(), value, report.reading_units.get(key, "")])
+        writer.writerow([_localize_metric(key, locale), _localize_code(str(value), locale), report.reading_units.get(key, "")])
     writer.writerow([])
-    writer.writerow(["PERIOD TRENDS"])
-    writer.writerow(["Parameter", "Minimum", "Average", "Maximum"])
+    writer.writerow(["اتجاهات الفترة" if locale == "ar" else "PERIOD TRENDS"])
+    writer.writerow(["المعامل", "الحد الأدنى", "المتوسط", "الحد الأقصى"] if locale == "ar" else ["Parameter", "Minimum", "Average", "Maximum"])
     for key, values in sorted(report.trends.items()):
-        writer.writerow([key.replace("_", " ").title(), values["minimum"], values["average"], values["maximum"]])
+        writer.writerow([_localize_metric(key, locale), values["minimum"], values["average"], values["maximum"]])
     writer.writerow([])
-    writer.writerow(["FINDINGS AND RECOMMENDATIONS"])
-    writer.writerow(["Severity", "Finding", "Evidence", "Recommended Action"])
+    writer.writerow(["النتائج والتوصيات" if locale == "ar" else "FINDINGS AND RECOMMENDATIONS"])
+    writer.writerow(["الخطورة", "النتيجة", "الدليل", "الإجراء الموصى به"] if locale == "ar" else ["Severity", "Finding", "Evidence", "Recommended Action"])
     if report.findings:
         for finding in report.findings:
-            writer.writerow([finding.severity.upper(), finding.title, finding.detail, finding.recommendation])
+            writer.writerow([
+                _localize_code(finding.severity, locale).upper(),
+                _localize_maintenance_text(finding.title, locale),
+                _localize_maintenance_text(finding.detail, locale),
+                _localize_maintenance_text(finding.recommendation, locale),
+            ])
     else:
-        writer.writerow(["INFORMATION", "No condition warning detected", "No configured limit was exceeded in available data.", "Continue routine inspection and servicing."])
+        empty_finding = ["INFORMATION", "No condition warning detected", "No configured limit was exceeded in available data.", "Continue routine inspection and servicing."]
+        writer.writerow([_localize_maintenance_text(value, locale) if index else _localize_code(value, locale) for index, value in enumerate(empty_finding)])
     writer.writerow([])
-    writer.writerow(["LIMITATIONS"])
+    writer.writerow(["القيود" if locale == "ar" else "LIMITATIONS"])
     for note in report.limitations:
-        writer.writerow([note])
-    filename = f"preventive_maintenance_{panel_id[:8]}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
-    return Response(
-        content=output.getvalue(), media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+        writer.writerow([_localize_maintenance_text(note, locale)])
+    filename = f"preventive_maintenance_{locale}_{panel_id[:8]}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
+    return _csv_response(output, filename)
 
 
 @router.get("/summary", response_model=ReportResponse)
@@ -300,6 +639,7 @@ async def export_generator_work_csv(
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
     period: Literal["all", "30d", "7d", "today"] = Query("30d"),
+    locale: Literal["en", "ar"] = Query("en"),
 ):
     """Export generator work report as a downloadable CSV spreadsheet."""
     site = await session.get(Site, user.site_id)
@@ -322,26 +662,27 @@ async def export_generator_work_csv(
     writer = csv.writer(output)
 
     # ── Section 1: Header & Metadata ─────────────────────────────────────
-    writer.writerow(["GENERATOR FLEET WORK REPORT"])
-    writer.writerow(["Facility Site", site.name])
-    writer.writerow(["Reporting Period", period.upper()])
-    writer.writerow(["Generated At (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")])
-    writer.writerow(["Requested By", user.full_name or user.email])
+    if locale == "ar":
+        writer.writerow(["تقرير عمل أسطول المولدات"])
+        writer.writerow(["الموقع", site.name])
+        writer.writerow(["فترة التقرير", _localize_period(period, locale)])
+        writer.writerow(["وقت الإنشاء (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")])
+        writer.writerow(["طلب بواسطة", user.full_name or user.email])
+    else:
+        writer.writerow(["GENERATOR FLEET WORK REPORT"])
+        writer.writerow(["Facility Site", site.name])
+        writer.writerow(["Reporting Period", _localize_period(period, locale)])
+        writer.writerow(["Generated At (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")])
+        writer.writerow(["Requested By", user.full_name or user.email])
     writer.writerow([])
 
     # ── Section 2: Fleet Work Summary ────────────────────────────────────
-    writer.writerow(["GENERATOR PERFORMANCE & WORK SUMMARY"])
-    writer.writerow([
-        "Generator Name",
-        "Transport / Address",
-        "Unit ID",
-        "Rated kW",
-        "Accumulated Run Hours",
-        "Total Energy (kWh)",
-        "Start Cycles",
-        "Status",
-        "Alarms in Period",
-    ])
+    writer.writerow(["ملخص أداء وعمل المولدات" if locale == "ar" else "GENERATOR PERFORMANCE & WORK SUMMARY"])
+    writer.writerow(
+        ["اسم المولد", "الاتصال / العنوان", "معرّف الوحدة", "القدرة الاسمية (kW)", "ساعات التشغيل المتراكمة", "إجمالي الطاقة (kWh)", "دورات التشغيل", "الحالة", "إنذارات الفترة"]
+        if locale == "ar" else
+        ["Generator Name", "Transport / Address", "Unit ID", "Rated kW", "Accumulated Run Hours", "Total Energy (kWh)", "Start Cycles", "Status", "Alarms in Period"]
+    )
 
     for p in panels:
         live = gateway.states.get(p.id) if (gateway and hasattr(gateway, "states")) else None
@@ -359,44 +700,32 @@ async def export_generator_work_csv(
             run_hours,
             total_kwh,
             start_count,
-            status_word,
+            _localize_code(status_word, locale),
             alarm_count,
         ])
 
     writer.writerow([])
 
     # ── Section 3: Operational Activity Log ──────────────────────────────
-    writer.writerow(["OPERATIONAL WORK & DUTY ACTIVITY LOG"])
-    writer.writerow([
-        "Timestamp (UTC)",
-        "Generator",
-        "Event Type",
-        "Command",
-        "Value / State",
-        "Triggered By",
-        "Reason / Note",
-    ])
+    writer.writerow(["سجل نشاط العمل والمناوبة التشغيلية" if locale == "ar" else "OPERATIONAL WORK & DUTY ACTIVITY LOG"])
+    writer.writerow(
+        ["الوقت (UTC)", "المولد", "نوع الحدث", "الأمر", "القيمة / الحالة", "تم بواسطة", "السبب / الملاحظة"]
+        if locale == "ar" else
+        ["Timestamp (UTC)", "Generator", "Event Type", "Command", "Value / State", "Triggered By", "Reason / Note"]
+    )
 
     panel_name_map = {p.id: p.name for p in panels}
     for e in events:
         writer.writerow([
             e.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-            panel_name_map.get(e.panel_id, "Site Level") if e.panel_id else "Site Level",
-            e.event_type,
-            e.command or "—",
-            e.value or "—",
-            e.triggered_by,
+            panel_name_map.get(e.panel_id, "مستوى الموقع" if locale == "ar" else "Site Level") if e.panel_id else ("مستوى الموقع" if locale == "ar" else "Site Level"),
+            _localize_code(e.event_type, locale),
+            _localize_code(e.command, locale) or "—",
+            _localize_code(e.value, locale) or "—",
+            _localize_code(e.triggered_by, locale),
             e.reason or "—",
         ])
 
-    csv_content = output.getvalue()
     site_slug = site.name.lower().replace(" ", "_")[:20]
-    filename = f"generator_work_report_{site_slug}_{period}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
-
-    return Response(
-        content=csv_content,
-        media_type="text/csv",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-        },
-    )
+    filename = f"generator_work_report_{locale}_{site_slug}_{period}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
+    return _csv_response(output, filename)

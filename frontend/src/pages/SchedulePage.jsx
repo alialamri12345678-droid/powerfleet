@@ -158,8 +158,8 @@ export function SchedulePage() {
           borderRadius: '4px',
           marginBottom: '1.5rem',
           fontSize: '0.875rem',
-          backgroundColor: message.type === 'success' ? '#EDF7F2' : '#FDF2F2',
-          border: `1px solid ${message.type === 'success' ? '#B8E2D1' : '#F5C6C6'}`,
+          backgroundColor: message.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)',
+          border: `1px solid ${message.type === 'success' ? 'var(--success-border)' : 'var(--danger-border)'}`,
           color: message.type === 'success' ? 'var(--status-running)' : 'var(--status-alarm)',
         }}>
           {message.text}
@@ -168,7 +168,7 @@ export function SchedulePage() {
 
       {/* Preset Buttons */}
       <div style={{
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--card-bg)',
         border: '1px solid var(--border-subtle)',
         borderRadius: '4px',
         padding: '1.25rem',
@@ -205,8 +205,8 @@ export function SchedulePage() {
       {/* Warnings */}
       {warnings.length > 0 && (
         <div style={{
-          backgroundColor: '#FEF8EC',
-          border: '1px solid #F2DEC0',
+          backgroundColor: 'var(--warning-bg)',
+          border: '1px solid var(--warning-border)',
           color: 'var(--status-warning)',
           padding: '0.75rem 1rem',
           borderRadius: '4px',
@@ -221,7 +221,7 @@ export function SchedulePage() {
 
       {/* Weekly Matrix */}
       <div style={{
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--card-bg)',
         border: '1px solid var(--border-subtle)',
         borderRadius: '4px',
         overflow: 'hidden',
@@ -258,7 +258,7 @@ export function SchedulePage() {
                           height: '32px',
                           borderRadius: '4px',
                           border: assigned ? '1px solid var(--accent-teal)' : '1px solid var(--border-subtle)',
-                          backgroundColor: assigned ? 'var(--accent-teal)' : '#FFFFFF',
+                          backgroundColor: assigned ? 'var(--accent-teal)' : 'var(--card-bg)',
                           color: assigned ? '#FFFFFF' : 'var(--text-secondary)',
                           cursor: 'pointer',
                           fontWeight: assigned ? 600 : 400,

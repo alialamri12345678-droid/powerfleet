@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
+import { Moon, Sun } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { useLocale } from '../i18n/LocaleContext';
+import { useTheme } from '../theme/ThemeContext';
 
 export function LoginPage({ onLoginSuccess }) {
   const { login } = useAuth();
   const { t, locale, setLocale } = useLocale();
+  const { theme, toggleTheme } = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
@@ -34,14 +37,23 @@ export function LoginPage({ onLoginSuccess }) {
       padding: '1.5rem',
     }}>
       <div style={{
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--card-bg)',
         border: '1px solid var(--border-subtle)',
         borderRadius: '4px',
         padding: '2.5rem',
         maxWidth: '420px',
         width: '100%',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={t(theme === 'dark' ? 'switchToLight' : 'switchToDark')}
+            title={t(theme === 'dark' ? 'switchToLight' : 'switchToDark')}
+          >
+            {theme === 'dark' ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
+          </button>
           <button type="button" className="logout-btn" onClick={() => setLocale(locale === 'en' ? 'ar' : 'en')} aria-label={t('language')} title={t('language')}>
             {locale === 'en' ? 'العربية' : 'English'}
           </button>
@@ -57,8 +69,8 @@ export function LoginPage({ onLoginSuccess }) {
 
         {error && (
           <div style={{
-            backgroundColor: '#FDF2F2',
-            border: '1px solid #F5C6C6',
+            backgroundColor: 'var(--danger-bg)',
+            border: '1px solid var(--danger-border)',
             color: 'var(--status-alarm)',
             padding: '0.625rem 0.875rem',
             borderRadius: '4px',

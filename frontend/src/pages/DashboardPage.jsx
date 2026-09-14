@@ -151,8 +151,8 @@ export function DashboardPage({
           borderRadius: '4px',
           marginBottom: '1.25rem',
           fontSize: '0.875rem',
-          backgroundColor: actionMessage.type === 'success' ? '#EDF7F2' : '#FDF2F2',
-          border: `1px solid ${actionMessage.type === 'success' ? '#B8E2D1' : '#F5C6C6'}`,
+          backgroundColor: actionMessage.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)',
+          border: `1px solid ${actionMessage.type === 'success' ? 'var(--success-border)' : 'var(--danger-border)'}`,
           color: actionMessage.type === 'success' ? 'var(--status-running)' : 'var(--status-alarm)',
         }}>
           {actionMessage.text}
@@ -165,7 +165,7 @@ export function DashboardPage({
         </div>
       ) : panels.length === 0 ? (
         <div style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--card-bg)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
           padding: '3rem',

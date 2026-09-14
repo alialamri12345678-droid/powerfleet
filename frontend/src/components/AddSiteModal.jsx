@@ -67,7 +67,7 @@ export function AddSiteModal({ isOpen, onClose, onSiteCreated, initialData = nul
     <div style={{
       position: 'fixed',
       inset: 0,
-      backgroundColor: 'rgba(26, 29, 31, 0.4)',
+      backgroundColor: 'var(--overlay-bg)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -75,7 +75,7 @@ export function AddSiteModal({ isOpen, onClose, onSiteCreated, initialData = nul
       padding: '1rem',
     }}>
       <div style={{
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--card-bg)',
         borderRadius: '4px',
         border: '1px solid var(--border-subtle)',
         maxWidth: '460px',
@@ -92,8 +92,8 @@ export function AddSiteModal({ isOpen, onClose, onSiteCreated, initialData = nul
         {error && (
           <div style={{
             padding: '0.625rem 0.875rem',
-            backgroundColor: '#FDF2F2',
-            border: '1px solid #F5C6C6',
+            backgroundColor: 'var(--danger-bg)',
+            border: '1px solid var(--danger-border)',
             color: 'var(--status-alarm)',
             borderRadius: '4px',
             fontSize: '0.8125rem',

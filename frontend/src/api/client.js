@@ -21,6 +21,7 @@ const ARABIC_ERRORS = {
   'Cannot delete the only existing site. Create another site first.': 'لا يمكن حذف الموقع الوحيد. أنشئ موقعًا آخر أولًا.',
   'Site is not available to this customer': 'هذا الموقع غير متاح لهذا العميل',
   'Account access has changed; sign in again': 'تغيرت صلاحيات الحساب؛ يرجى تسجيل الدخول مجددًا',
+  'The controller still reports active alarms. Resolve or reset them at the controller before clearing the maintenance finding.': 'ما زالت لوحة التحكم تبلغ عن إنذارات نشطة. عالجها أو أعد ضبطها من لوحة التحكم قبل مسح نتيجة الصيانة.',
 };
 
 function localizeError(message, status) {

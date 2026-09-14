@@ -461,6 +461,10 @@ class MaintenanceRecordCreate(BaseModel):
     performed_by: str | None = Field(None, max_length=200)
 
 
+class MaintenanceAlarmClearRequest(BaseModel):
+    resolution_note: str = Field(..., min_length=3, max_length=1000)
+
+
 class MaintenanceRecordResponse(MaintenanceRecordCreate):
     id: str
     panel_id: str

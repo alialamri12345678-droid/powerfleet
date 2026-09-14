@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react';
+import { Download, Trash2 } from 'lucide-react';
 import { apiRequest } from '../api/client';
 import { useLocale } from '../i18n/LocaleContext';
 
 export function EventLogPage() {
-  const { t, formatCode, formatDate, formatTime } = useLocale();
+  const { t, locale, formatCode, formatDate, formatTime } = useLocale();
   const [events, setEvents] = useState([]);
   const [panels, setPanels] = useState([]);
   const [filterPanel, setFilterPanel] = useState('');
   const [filterType, setFilterType] = useState('');
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -43,6 +46,55 @@ export function EventLogPage() {
     }
   }
 
+  function filteredUrl(path, extraParams = {}) {
+    const params = new URLSearchParams();
+    if (filterPanel) params.set('panel_id', filterPanel);
+    if (filterType) params.set('event_type', filterType);
+    Object.entries(extraParams).forEach(([key, value]) => params.set(key, value));
+    const query = params.toString();
+    return query ? `${path}?${query}` : path;
+  }
+
+  async function exportEvents() {
+    setExporting(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(filteredUrl('/api/events/export', { locale }), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) throw new Error(t('auditExportFailed'));
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const date = new Date().toISOString().slice(0, 10);
+      link.download = locale === 'ar' ? `سجل_التدقيق_${date}.csv` : `audit_log_${date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function clearEvents() {
+    if (!window.confirm(t('clearAuditConfirm'))) return;
+    setClearing(true);
+    setError(null);
+    try {
+      await apiRequest(filteredUrl('/events'), { method: 'DELETE' });
+      await loadEvents();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setClearing(false);
+    }
+  }
+
   const getPanelName = (panelId) => {
     if (!panelId) return t('siteSystem');
     const found = panels.find((p) => p.id === panelId);
@@ -58,14 +110,22 @@ export function EventLogPage() {
             {t('auditSubtitle')}
           </p>
         </div>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={loadEvents}
-          disabled={loading}
-        >
-          {loading ? t('refreshing') : t('refreshLog')}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-secondary" onClick={exportEvents} disabled={exporting} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+            <Download size={15} /> {exporting ? t('exportingAudit') : t('exportAuditCsv')}
+          </button>
+          <button type="button" className="btn btn-danger" onClick={clearEvents} disabled={clearing || events.length === 0} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+            <Trash2 size={15} /> {clearing ? t('clearingAudit') : t('clearAuditLog')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={loadEvents}
+            disabled={loading}
+          >
+            {loading ? t('refreshing') : t('refreshLog')}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -74,8 +134,8 @@ export function EventLogPage() {
           borderRadius: '4px',
           marginBottom: '1.5rem',
           fontSize: '0.875rem',
-          backgroundColor: '#FDF2F2',
-          border: '1px solid #F5C6C6',
+          backgroundColor: 'var(--danger-bg)',
+          border: '1px solid var(--danger-border)',
           color: 'var(--status-alarm)',
         }}>
           {error}
@@ -87,7 +147,7 @@ export function EventLogPage() {
         display: 'flex',
         gap: '1rem',
         marginBottom: '1.5rem',
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--card-bg)',
         border: '1px solid var(--border-subtle)',
         borderRadius: '4px',
         padding: '1rem',
@@ -128,7 +188,7 @@ export function EventLogPage() {
 
       {/* Table */}
       <div style={{
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'var(--card-bg)',
         border: '1px solid var(--border-subtle)',
         borderRadius: '4px',
         overflow: 'hidden',

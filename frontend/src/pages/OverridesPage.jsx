@@ -86,8 +86,8 @@ export function OverridesPage() {
           borderRadius: '4px',
           marginBottom: '1.5rem',
           fontSize: '0.875rem',
-          backgroundColor: message.type === 'success' ? '#EDF7F2' : '#FDF2F2',
-          border: `1px solid ${message.type === 'success' ? '#B8E2D1' : '#F5C6C6'}`,
+          backgroundColor: message.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)',
+          border: `1px solid ${message.type === 'success' ? 'var(--success-border)' : 'var(--danger-border)'}`,
           color: message.type === 'success' ? 'var(--status-running)' : 'var(--status-alarm)',
         }}>
           {message.text}
@@ -97,7 +97,7 @@ export function OverridesPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
         {/* Create Override Form */}
         <div style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--card-bg)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
           padding: '1.75rem',
@@ -179,7 +179,7 @@ export function OverridesPage() {
 
         {/* Active Overrides List */}
         <div style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--card-bg)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
           padding: '1.75rem',

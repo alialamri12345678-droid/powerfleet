@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from math import ceil
 from statistics import mean
 from typing import Any, Iterable
@@ -29,9 +30,25 @@ RULES = (
 )
 
 
-def _values(samples: Iterable[Any], rule: MetricRule) -> list[float]:
+def _is_after(value: datetime | None, cutoff: datetime | None) -> bool:
+    if cutoff is None:
+        return True
+    if value is None:
+        return False
+    if value.tzinfo is None and cutoff.tzinfo is not None:
+        cutoff = cutoff.replace(tzinfo=None)
+    elif value.tzinfo is not None and cutoff.tzinfo is None:
+        value = value.replace(tzinfo=None)
+    return value > cutoff
+
+
+def _values(
+    samples: Iterable[Any], rule: MetricRule, cleared_after: datetime | None = None,
+) -> list[float]:
     values: list[float] = []
     for sample in samples:
+        if not _is_after(getattr(sample, "recorded_at", None), cleared_after):
+            continue
         if rule.running_only and sample.engine_status != "running":
             continue
         value = getattr(sample, rule.key, None)
@@ -40,17 +57,28 @@ def _values(samples: Iterable[Any], rule: MetricRule) -> list[float]:
     return values
 
 
-def analyze_generator(panel: Any, samples: list[Any], alarms: list[Any], live: Any | None,
-                      last_service: Any | None = None) -> dict[str, Any]:
+def analyze_generator(
+    panel: Any,
+    samples: list[Any],
+    alarms: list[Any],
+    live: Any | None,
+    last_service: Any | None = None,
+    cleared_findings: dict[str, datetime] | None = None,
+) -> dict[str, Any]:
     """Return a transparent, deterministic report; it is not a failure diagnosis."""
     latest = live or (samples[-1] if samples else None)
     findings: list[dict[str, Any]] = []
     trends: dict[str, dict[str, float]] = {}
     configured_limits = panel.maintenance_limits or {}
+    cleared_findings = cleared_findings or {}
 
     for rule in RULES:
-        values = _values(samples, rule)
-        if not values and latest is not None:
+        cleared_after = cleared_findings.get(rule.key)
+        values = _values(samples, rule, cleared_after)
+        live_is_newer = live is not None and _is_after(
+            getattr(live, "last_successful_poll", None), cleared_after
+        )
+        if not values and latest is not None and (cleared_after is None or live_is_newer):
             value = getattr(latest, rule.key, None)
             if value is not None and (not rule.running_only or getattr(latest, "engine_status", "") == "running"):
                 values = [float(value)]
@@ -95,6 +123,11 @@ def analyze_generator(panel: Any, samples: list[Any], alarms: list[Any], live: A
                 "unit": rule.unit,
             })
 
+    alarm_clear_time = cleared_findings.get("alarms")
+    alarms = [
+        alarm for alarm in alarms
+        if _is_after(getattr(alarm, "timestamp", None), alarm_clear_time)
+    ]
     if alarms:
         alarm_names = sorted({a.value or "Unspecified alarm" for a in alarms})
         findings.append({
@@ -114,7 +147,13 @@ def analyze_generator(panel: Any, samples: list[Any], alarms: list[Any], live: A
     if not last_service and run_hours > next_service:
         next_service = ceil(max(run_hours, 1.0) / service_interval) * service_interval
     remaining = max(0.0, next_service - run_hours)
-    if remaining <= 25:
+    service_clear_time = cleared_findings.get("run_hours")
+    service_reading_time = getattr(live, "last_successful_poll", None) if live else (
+        getattr(samples[-1], "recorded_at", None) if samples else None
+    )
+    if remaining <= 25 and (
+        service_clear_time is None or _is_after(service_reading_time, service_clear_time)
+    ):
         findings.append({
             "severity": "warning" if remaining > 0 else "critical",
             "metric": "run_hours",

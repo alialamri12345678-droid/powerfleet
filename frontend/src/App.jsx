@@ -14,6 +14,7 @@ import { AddGeneratorModal } from './components/AddGeneratorModal';
 import { useWebSocketTelemetry } from './api/ws';
 import { apiRequest } from './api/client';
 import { LocaleProvider, useLocale } from './i18n/LocaleContext';
+import { ThemeProvider } from './theme/ThemeContext';
 
 function AppContent() {
   const { t } = useLocale();
@@ -146,10 +147,12 @@ function AppContent() {
 
 export default function App() {
   return (
-    <LocaleProvider>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
-    </LocaleProvider>
+    <ThemeProvider>
+      <LocaleProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </LocaleProvider>
+    </ThemeProvider>
   );
 }

@@ -286,8 +286,8 @@ export function SettingsPage() {
           borderRadius: '4px',
           marginBottom: '1.5rem',
           fontSize: '0.875rem',
-          backgroundColor: message.type === 'success' ? '#EDF7F2' : '#FDF2F2',
-          border: `1px solid ${message.type === 'success' ? '#B8E2D1' : '#F5C6C6'}`,
+          backgroundColor: message.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)',
+          border: `1px solid ${message.type === 'success' ? 'var(--success-border)' : 'var(--danger-border)'}`,
           color: message.type === 'success' ? 'var(--status-running)' : 'var(--status-alarm)',
         }}>
           {message.text}
@@ -303,7 +303,7 @@ export function SettingsPage() {
           
           {/* Site Settings Card */}
           <div style={{
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--card-bg)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             padding: '2rem',
@@ -339,7 +339,7 @@ export function SettingsPage() {
           </div>
 
           <form onSubmit={handleSave} style={{
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--card-bg)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             padding: '2rem',
@@ -385,7 +385,7 @@ export function SettingsPage() {
 
         {/* ── Backup Start Thresholds Card ── */}
         <div style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--card-bg)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
           padding: '2rem',
@@ -439,7 +439,7 @@ export function SettingsPage() {
 
         {/* ── Backup Release Thresholds Card ── */}
         <div style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--card-bg)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
           padding: '2rem',
@@ -493,7 +493,7 @@ export function SettingsPage() {
 
         {/* Daily Priorities */}
         <form onSubmit={handleSavePriorities} style={{
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--card-bg)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             padding: '2rem',
@@ -538,7 +538,7 @@ export function SettingsPage() {
                                 padding: '0.25rem',
                                 border: '1px solid var(--border-subtle)',
                                 borderRadius: '4px',
-                                background: '#FFFFFF',
+                                background: 'var(--card-bg)',
                                 fontWeight: 600,
                                 cursor: 'pointer'
                               }}
@@ -570,8 +570,8 @@ export function SettingsPage() {
         </form>
 
         <div style={{
-          backgroundColor: '#FDF2F2',
-          border: '1px solid #F5C6C6',
+          backgroundColor: 'var(--danger-bg)',
+          border: '1px solid var(--danger-border)',
           borderRadius: '4px',
           padding: '2rem',
           marginTop: '2rem'
@@ -683,7 +683,7 @@ function ThresholdBar({ thresholds, valueKey, indicatorColors, onChange, type })
         style={{
           position: 'relative',
           height: '48px',
-          background: 'linear-gradient(90deg, #E8F5E9 0%, #FFF9C4 40%, #FFCDD2 100%)',
+          background: 'var(--threshold-gradient)',
           borderRadius: '8px',
           border: '1px solid var(--border-subtle)',
           cursor: dragging ? 'grabbing' : 'default',
@@ -783,7 +783,7 @@ function ThresholdBar({ thresholds, valueKey, indicatorColors, onChange, type })
             padding: '0.5rem',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
-            backgroundColor: '#FAFAFA'
+            backgroundColor: 'var(--surface-subtle)'
           }}>
             <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
               {t.panel_name || translate('generatorShort', { number: t.priority_order })}

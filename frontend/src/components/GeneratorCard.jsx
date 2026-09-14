@@ -114,7 +114,7 @@ export function GeneratorCard({
       )}
 
       {/* Quick-action controls */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid #F0F0EE', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-divider)', alignItems: 'center' }}>
         <button
           type="button"
           className="btn btn-secondary"

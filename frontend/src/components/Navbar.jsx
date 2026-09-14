@@ -1,7 +1,8 @@
 import React from 'react';
-import { Plus } from 'lucide-react';
+import { Moon, Plus, Sun } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { useLocale } from '../i18n/LocaleContext';
+import { useTheme } from '../theme/ThemeContext';
 
 export function Navbar({
   activeTab,
@@ -13,6 +14,7 @@ export function Navbar({
 }) {
   const { user, logout } = useAuth();
   const { locale, setLocale, t } = useLocale();
+  const { theme, toggleTheme } = useTheme();
 
   return (
     <header className="top-nav">
@@ -27,7 +29,7 @@ export function Navbar({
               padding: '0.25rem 0.5rem',
               fontSize: '0.8125rem',
               fontWeight: 500,
-              backgroundColor: '#FAFAF8',
+              backgroundColor: 'var(--bg)',
               borderColor: 'var(--border-subtle)',
               cursor: 'pointer',
             }}
@@ -115,6 +117,15 @@ export function Navbar({
       </nav>
 
       <div className="user-section">
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={toggleTheme}
+          title={t(theme === 'dark' ? 'switchToLight' : 'switchToDark')}
+          aria-label={t(theme === 'dark' ? 'switchToLight' : 'switchToDark')}
+        >
+          {theme === 'dark' ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
+        </button>
         <button type="button" className="logout-btn" onClick={() => setLocale(locale === 'en' ? 'ar' : 'en')} title={t('language')} aria-label={t('language')}>
           {locale === 'en' ? 'العربية' : 'English'}
         </button>

@@ -99,8 +99,8 @@ export function DiagnosticsPage() {
           borderRadius: '4px',
           marginBottom: '1.5rem',
           fontSize: '0.875rem',
-          backgroundColor: '#FDF2F2',
-          border: '1px solid #F5C6C6',
+          backgroundColor: 'var(--danger-bg)',
+          border: '1px solid var(--danger-border)',
           color: 'var(--status-alarm)',
         }}>
           {error}
@@ -124,7 +124,7 @@ export function DiagnosticsPage() {
       {/* Connection Health Overview */}
       {healthData && (
         <div style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--card-bg)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
           padding: '1.25rem',
@@ -164,7 +164,7 @@ export function DiagnosticsPage() {
       {/* Raw Registers Table */}
       {diagData && diagData.registers && (
         <div style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: 'var(--card-bg)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
           overflow: 'hidden',

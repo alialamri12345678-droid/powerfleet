@@ -40,6 +40,21 @@ def upgrade() -> None:
     if "organization_id" not in user_columns:
         with op.batch_alter_table("users") as batch:
             batch.add_column(sa.Column("organization_id", sa.String(36), nullable=True))
+    inspector = sa.inspect(bind)
+    site_indexes = {index["name"] for index in inspector.get_indexes("sites")}
+    site_foreign_keys = {tuple(fk["constrained_columns"]) for fk in inspector.get_foreign_keys("sites")}
+    with op.batch_alter_table("sites") as batch:
+        if "ix_sites_organization_id" not in site_indexes:
+            batch.create_index("ix_sites_organization_id", ["organization_id"])
+        if ("organization_id",) not in site_foreign_keys:
+            batch.create_foreign_key("fk_sites_organization", "organizations", ["organization_id"], ["id"], ondelete="CASCADE")
+    user_indexes = {index["name"] for index in inspector.get_indexes("users")}
+    user_foreign_keys = {tuple(fk["constrained_columns"]) for fk in inspector.get_foreign_keys("users")}
+    with op.batch_alter_table("users") as batch:
+        if "ix_users_organization_id" not in user_indexes:
+            batch.create_index("ix_users_organization_id", ["organization_id"])
+        if ("organization_id",) not in user_foreign_keys:
+            batch.create_foreign_key("fk_users_organization", "organizations", ["organization_id"], ["id"], ondelete="CASCADE")
     op.execute(sa.text("UPDATE sites SET organization_id = :id").bindparams(id=DEFAULT_ORG_ID))
     op.execute(sa.text("UPDATE users SET organization_id = :id").bindparams(id=DEFAULT_ORG_ID))
     with op.batch_alter_table("sites") as batch:

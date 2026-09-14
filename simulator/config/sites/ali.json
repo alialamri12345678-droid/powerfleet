@@ -55,7 +55,7 @@
     "frequency_hz": 50.0
   },
   "solar": {
-    "enabled": false,
+    "enabled": true,
     "closed_on_start": false,
     "name": "SOLAR",
     "rated_kw": 500.0,
@@ -78,5 +78,8 @@
       "port": 5021,
       "unit_id": 20
     }
+  },
+  "power_management": {
+    "automatic_breaker_control": false
   }
 }
