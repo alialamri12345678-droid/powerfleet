@@ -16,25 +16,30 @@ DEFAULT_ORG_ID = "default-customer-organization"
 
 
 def upgrade() -> None:
-    op.create_table(
-        "organizations",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("name", sa.String(200), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-    )
-    op.execute(sa.text(
-        "INSERT INTO organizations (id, name, created_at, updated_at) "
-        "VALUES (:id, :name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-    ).bindparams(id=DEFAULT_ORG_ID, name="Existing Customer Organization"))
-    with op.batch_alter_table("sites") as batch:
-        batch.add_column(sa.Column("organization_id", sa.String(36), nullable=True))
-        batch.create_foreign_key("fk_sites_organization", "organizations", ["organization_id"], ["id"], ondelete="CASCADE")
-        batch.create_index("ix_sites_organization_id", ["organization_id"])
-    with op.batch_alter_table("users") as batch:
-        batch.add_column(sa.Column("organization_id", sa.String(36), nullable=True))
-        batch.create_foreign_key("fk_users_organization", "organizations", ["organization_id"], ["id"], ondelete="CASCADE")
-        batch.create_index("ix_users_organization_id", ["organization_id"])
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "organizations" not in inspector.get_table_names():
+        op.create_table(
+            "organizations",
+            sa.Column("id", sa.String(36), primary_key=True),
+            sa.Column("name", sa.String(200), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        )
+    organizations = sa.table("organizations", sa.column("id"), sa.column("name"), sa.column("created_at"), sa.column("updated_at"))
+    if bind.execute(sa.select(organizations.c.id).where(organizations.c.id == DEFAULT_ORG_ID)).first() is None:
+        op.execute(sa.text(
+            "INSERT INTO organizations (id, name, created_at, updated_at) "
+            "VALUES (:id, :name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ).bindparams(id=DEFAULT_ORG_ID, name="Existing Customer Organization"))
+    site_columns = {column["name"] for column in inspector.get_columns("sites")}
+    if "organization_id" not in site_columns:
+        with op.batch_alter_table("sites") as batch:
+            batch.add_column(sa.Column("organization_id", sa.String(36), nullable=True))
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "organization_id" not in user_columns:
+        with op.batch_alter_table("users") as batch:
+            batch.add_column(sa.Column("organization_id", sa.String(36), nullable=True))
     op.execute(sa.text("UPDATE sites SET organization_id = :id").bindparams(id=DEFAULT_ORG_ID))
     op.execute(sa.text("UPDATE users SET organization_id = :id").bindparams(id=DEFAULT_ORG_ID))
     with op.batch_alter_table("sites") as batch:

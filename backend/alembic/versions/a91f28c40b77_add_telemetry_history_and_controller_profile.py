@@ -14,8 +14,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("panels") as batch:
-        batch.add_column(sa.Column("controller_profile", sa.String(80), nullable=False, server_default="dse8620_mkii"))
+    inspector = sa.inspect(op.get_bind())
+    panel_columns = {column["name"] for column in inspector.get_columns("panels")}
+    if "controller_profile" not in panel_columns:
+        with op.batch_alter_table("panels") as batch:
+            batch.add_column(sa.Column("controller_profile", sa.String(80), nullable=False, server_default="dse8620_mkii"))
+    if "telemetry_samples" in inspector.get_table_names():
+        return
     op.create_table(
         "telemetry_samples",
         sa.Column("id", sa.String(36), primary_key=True),

@@ -14,6 +14,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if "gateway_leases" in sa.inspect(op.get_bind()).get_table_names():
+        return
     op.create_table(
         "gateway_leases",
         sa.Column("site_id", sa.String(36), primary_key=True),

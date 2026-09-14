@@ -14,9 +14,16 @@ depends_on = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("panels") as batch:
-        batch.add_column(sa.Column("maintenance_interval_hours", sa.Float(), nullable=False, server_default="250"))
-        batch.add_column(sa.Column("maintenance_limits", sa.JSON(), nullable=False, server_default="{}"))
+    inspector = sa.inspect(op.get_bind())
+    panel_columns = {column["name"] for column in inspector.get_columns("panels")}
+    if "maintenance_interval_hours" not in panel_columns or "maintenance_limits" not in panel_columns:
+        with op.batch_alter_table("panels") as batch:
+            if "maintenance_interval_hours" not in panel_columns:
+                batch.add_column(sa.Column("maintenance_interval_hours", sa.Float(), nullable=False, server_default="250"))
+            if "maintenance_limits" not in panel_columns:
+                batch.add_column(sa.Column("maintenance_limits", sa.JSON(), nullable=False, server_default="{}"))
+    if "command_records" in inspector.get_table_names() and "maintenance_records" in inspector.get_table_names():
+        return
     op.create_table(
         "command_records",
         sa.Column("id", sa.String(36), primary_key=True),
