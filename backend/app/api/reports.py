@@ -3,8 +3,9 @@
 import csv
 import io
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Annotated, Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import case, desc, func, select
@@ -31,6 +32,7 @@ from app.models.maintenance_record import MaintenanceRecord
 from app.modbus.gateway import ModbusGateway
 from app.services.preventive_maintenance import analyze_generator
 from app.db.tenant import scoped_get
+from app.services.performance import report_window
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -127,7 +129,14 @@ def _localize_code(value: str | None, locale: str) -> str:
 def _localize_period(period: str, locale: str) -> str:
     if locale != "ar":
         return period.upper()
-    return {"today": "اليوم", "7d": "آخر 7 أيام", "30d": "آخر 30 يومًا", "all": "كل المدة"}[period]
+    return {"today": "اليوم", "7d": "آخر 7 أيام", "30d": "آخر 30 يومًا", "all": "كل المدة", "custom": "تواريخ مخصصة"}[period]
+
+
+def _report_dates(period: str, site: Site, start_date: date | None, end_date: date | None):
+    try:
+        return report_window(period, site.timezone, start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def _localize_metric(key: str, locale: str) -> str:
@@ -393,14 +402,23 @@ async def export_maintenance_records_csv(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     locale: Literal["en", "ar"] = Query("en"),
+    period: Literal["all", "30d", "7d", "today", "custom"] = Query("all"),
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> Response:
     """Export completed service history for one generator as localized CSV."""
     panel = await scoped_get(session, Panel, panel_id, user.site_id)
     if panel is None:
         raise HTTPException(status_code=404, detail="Generator not found")
+    site = await session.get(Site, user.site_id)
+    start, end = _report_dates(period, site, start_date, end_date)
+    local_end = end.astimezone(ZoneInfo(site.timezone))
+    exclusive_day = local_end.date() + (timedelta(days=1) if local_end.time() != time.min else timedelta())
     stmt = scoped_select(MaintenanceRecord, user.site_id).where(
-        MaintenanceRecord.panel_id == panel_id
+        MaintenanceRecord.panel_id == panel_id, MaintenanceRecord.service_date < exclusive_day,
     ).order_by(desc(MaintenanceRecord.service_date), desc(MaintenanceRecord.created_at))
+    if start:
+        stmt = stmt.where(MaintenanceRecord.service_date >= start.astimezone(ZoneInfo(site.timezone)).date())
     records = (await session.execute(stmt)).scalars().all()
 
     output = io.StringIO(newline="")
@@ -408,6 +426,8 @@ async def export_maintenance_records_csv(
     if locale == "ar":
         writer.writerow(["سجل الصيانة المكتملة"])
         writer.writerow(["المولد", panel.name])
+        writer.writerow(["من (UTC)", start.isoformat() if start else "—"])
+        writer.writerow(["إلى (UTC)", end.isoformat()])
         writer.writerow(["وقت التصدير (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")])
         writer.writerow(["عدد السجلات", len(records)])
         writer.writerow([])
@@ -418,6 +438,8 @@ async def export_maintenance_records_csv(
     else:
         writer.writerow(["COMPLETED SERVICE HISTORY"])
         writer.writerow(["Generator", panel.name])
+        writer.writerow(["From (UTC)", start.isoformat() if start else "—"])
+        writer.writerow(["To (UTC)", end.isoformat()])
         writer.writerow(["Exported At (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")])
         writer.writerow(["Record Count", len(records)])
         writer.writerow([])
@@ -521,12 +543,15 @@ async def get_report_summary(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
-    period: Literal["all", "30d", "7d", "today"] = Query("30d"),
+    period: Literal["all", "30d", "7d", "today", "custom"] = Query("30d"),
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> ReportResponse:
     """Generate operational work report summary and fleet KPIs for the active site."""
     site = await session.get(Site, user.site_id)
     if site is None:
         raise HTTPException(status_code=404, detail="Site not found")
+    start, end = _report_dates(period, site, start_date, end_date)
 
     # Fetch panels
     p_stmt = scoped_select(Panel, user.site_id).order_by(Panel.priority, Panel.name)
@@ -534,11 +559,16 @@ async def get_report_summary(
     panels = p_res.scalars().all()
 
     # Fetch events in period
-    cutoff = _calculate_cutoff(period)
     e_stmt = scoped_select(Event, user.site_id)
-    if cutoff:
-        e_stmt = e_stmt.where(Event.timestamp >= cutoff)
-    e_stmt = e_stmt.order_by(desc(Event.timestamp)).limit(200)
+    if start:
+        e_stmt = e_stmt.where(Event.timestamp >= start)
+    e_stmt = e_stmt.where(Event.timestamp < end)
+    alarm_stmt = select(Event.panel_id, func.count(Event.id)).where(
+        Event.site_id == user.site_id, Event.event_type == "alarm_active", Event.timestamp < end)
+    if start:
+        alarm_stmt = alarm_stmt.where(Event.timestamp >= start)
+    alarm_counts = dict((await session.execute(alarm_stmt.group_by(Event.panel_id))).all())
+    e_stmt = e_stmt.order_by(desc(Event.timestamp)).limit(50)
     e_res = await session.execute(e_stmt)
     events = e_res.scalars().all()
 
@@ -550,8 +580,9 @@ async def get_report_summary(
         func.avg(case((TelemetrySample.engine_status == "running", TelemetrySample.load_kw_percent), else_=None)),
         func.max(case((TelemetrySample.engine_status == "running", TelemetrySample.load_kw_percent), else_=None)),
     ).where(TelemetrySample.site_id == user.site_id)
-    if cutoff:
-        telemetry_stmt = telemetry_stmt.where(TelemetrySample.recorded_at >= cutoff)
+    if start:
+        telemetry_stmt = telemetry_stmt.where(TelemetrySample.recorded_at >= start)
+    telemetry_stmt = telemetry_stmt.where(TelemetrySample.recorded_at < end)
     telemetry_rows = (await session.execute(telemetry_stmt.group_by(TelemetrySample.panel_id))).all()
     history = {row[0]: row for row in telemetry_rows}
 
@@ -571,11 +602,16 @@ async def get_report_summary(
         run_hours = max(0.0, float(row[2] - row[1])) if row and row[1] is not None else 0.0
         total_kwh = max(0.0, float(row[4] - row[3])) if row and row[3] is not None else 0.0
         start_count = max(0, int(row[6] - row[5])) if row and row[5] is not None else 0
-        current_status = live.display_status if live else "Idle"
+        historical = None
+        if period == "custom":
+            historical = (await session.execute(scoped_select(TelemetrySample, user.site_id).where(
+                TelemetrySample.panel_id == p.id, TelemetrySample.recorded_at < end,
+                *( [TelemetrySample.recorded_at >= start] if start else []),
+            ).order_by(desc(TelemetrySample.recorded_at)).limit(1))).scalars().first()
+        current_status = (historical.engine_status if historical else "Unknown") if period == "custom" else (live.display_status if live else "Idle")
 
         # Count alarms in period
-        panel_events = [e for e in events if e.panel_id == p.id]
-        alarms_in_period = sum(1 for e in panel_events if e.event_type == "alarm_active")
+        alarms_in_period = alarm_counts.get(p.id, 0)
 
         # Load metrics
         avg_load = float(row[7] or 0.0) if row else 0.0
@@ -585,7 +621,9 @@ async def get_report_summary(
         total_fleet_kwh += total_kwh
         total_fleet_starts += start_count
 
-        if live and live.is_reachable and not live.active_alarms:
+        if period == "custom" and historical and historical.is_reachable and not historical.active_alarm_count:
+            healthy_count += 1
+        elif period != "custom" and live and live.is_reachable and not live.active_alarms:
             healthy_count += 1
 
         gen_summaries.append(
@@ -638,22 +676,27 @@ async def export_generator_work_csv(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     gateway: Annotated[ModbusGateway | None, Depends(get_gateway)],
-    period: Literal["all", "30d", "7d", "today"] = Query("30d"),
+    period: Literal["all", "30d", "7d", "today", "custom"] = Query("30d"),
+    start_date: date | None = None,
+    end_date: date | None = None,
     locale: Literal["en", "ar"] = Query("en"),
 ):
     """Export generator work report as a downloadable CSV spreadsheet."""
     site = await session.get(Site, user.site_id)
     if site is None:
         raise HTTPException(status_code=404, detail="Site not found")
+    start, end = _report_dates(period, site, start_date, end_date)
+    summary = await get_report_summary(user, session, gateway, period, start_date, end_date)
+    summaries_by_id = {item.panel_id: item for item in summary.generators}
 
     p_stmt = scoped_select(Panel, user.site_id).order_by(Panel.priority, Panel.name)
     p_res = await session.execute(p_stmt)
     panels = p_res.scalars().all()
 
-    cutoff = _calculate_cutoff(period)
     e_stmt = scoped_select(Event, user.site_id)
-    if cutoff:
-        e_stmt = e_stmt.where(Event.timestamp >= cutoff)
+    if start:
+        e_stmt = e_stmt.where(Event.timestamp >= start)
+    e_stmt = e_stmt.where(Event.timestamp < end)
     e_stmt = e_stmt.order_by(desc(Event.timestamp))
     e_res = await session.execute(e_stmt)
     events = e_res.scalars().all()
@@ -666,12 +709,16 @@ async def export_generator_work_csv(
         writer.writerow(["تقرير عمل أسطول المولدات"])
         writer.writerow(["الموقع", site.name])
         writer.writerow(["فترة التقرير", _localize_period(period, locale)])
+        writer.writerow(["من (UTC)", start.isoformat() if start else "—"])
+        writer.writerow(["إلى (UTC)", end.isoformat()])
         writer.writerow(["وقت الإنشاء (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")])
         writer.writerow(["طلب بواسطة", user.full_name or user.email])
     else:
         writer.writerow(["GENERATOR FLEET WORK REPORT"])
         writer.writerow(["Facility Site", site.name])
         writer.writerow(["Reporting Period", _localize_period(period, locale)])
+        writer.writerow(["From (UTC)", start.isoformat() if start else "—"])
+        writer.writerow(["To (UTC)", end.isoformat()])
         writer.writerow(["Generated At (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")])
         writer.writerow(["Requested By", user.full_name or user.email])
     writer.writerow([])
@@ -685,23 +732,18 @@ async def export_generator_work_csv(
     )
 
     for p in panels:
-        live = gateway.states.get(p.id) if (gateway and hasattr(gateway, "states")) else None
-        run_hours = round(live.run_hours, 1) if live else 0.0
-        total_kwh = round(live.total_kwh, 1) if live else 0.0
-        start_count = live.number_of_starts if live else 0
-        status_word = live.display_status if live else "Idle"
-        alarm_count = sum(1 for e in events if e.panel_id == p.id and e.event_type == "alarm_active")
+        row = summaries_by_id[p.id]
 
         writer.writerow([
             p.name,
             f"{p.transport_type.upper()} ({p.address})",
             p.unit_id,
             float(p.rated_kw),
-            run_hours,
-            total_kwh,
-            start_count,
-            _localize_code(status_word, locale),
-            alarm_count,
+            row.run_hours,
+            row.total_kwh,
+            row.number_of_starts,
+            _localize_code(row.current_status, locale),
+            row.alarm_count,
         ])
 
     writer.writerow([])

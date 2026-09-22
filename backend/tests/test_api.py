@@ -28,8 +28,195 @@ from app.models.site import Site
 from app.models.start_threshold import StartThreshold
 from app.models.threshold import Threshold
 from app.models.telemetry_sample import TelemetrySample
+from app.models.maintenance_task import MaintenanceFindingRecord, MaintenanceTask
+from app.models.maintenance_record import MaintenanceRecord
+from app.services.maintenance import emit_due_events
+
+
+@pytest.mark.asyncio
+async def test_dispatch_choice_defaults_to_legacy_and_measurements_are_scoped(app, headers):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        current = await ac.get("/sites/site_1/dispatch", headers=headers)
+        assert current.status_code == 200
+        assert current.json()["config"]["mode"] == "legacy"
+        invalid = await ac.patch("/sites/site_1/dispatch", headers=headers,
+                                 json={"mode": "automatic", "topology_verified": False})
+        assert invalid.status_code == 422
+        saved = await ac.patch("/sites/site_1/dispatch", headers=headers,
+                               json={"mode": "advisory", "grid_present": True})
+        assert saved.status_code == 200, saved.text
+        reading = {"measured_at": datetime.now(timezone.utc).isoformat(), "load_kw": 120,
+                   "solar_kw": 25, "grid_kw": 95, "grid_connected": True, "bus_energized": True}
+        assert (await ac.post("/sites/site_1/dispatch/measurement", headers=headers, json=reading)).status_code == 200
+        stored = (await ac.get("/sites/site_1/dispatch", headers=headers)).json()
+        assert stored["measurement_fresh"]
+        assert stored["measurement"]["grid_kw"] == 95
+        assert (await ac.get("/sites/other_customer_site/dispatch", headers=headers)).status_code == 404
 from app.modbus.gateway import ModbusGateway
 from app.rules.engine import RulesEngine
+
+
+@pytest.mark.asyncio
+async def test_preventive_tasks_complete_independently_and_findings_await_measurement(app, headers):
+    today = date.today().isoformat()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        for component in ("oil", "fuel_filter"):
+            created = await ac.post("/reports/maintenance/p1/tasks", headers=headers, json={
+                "component": component, "name": component, "interval_hours": 250,
+                "baseline_run_hours": 10, "interval_days": 180, "baseline_date": today,
+                "manufacturer_reference": "Engine schedule",
+            })
+            assert created.status_code == 201, created.text
+            if component == "oil":
+                oil_id = created.json()["id"]
+        before = await ac.get("/reports/maintenance/p1", headers=headers)
+        assert before.status_code == 200, before.text
+        assert before.json()["maintenance_compliance_percent"] is None
+        assert before.json()["monitored_condition"] == "insufficient_data"
+        assert (await ac.get("/reports/maintenance/other_panel", headers=headers)).status_code == 404
+        completed = await ac.post("/reports/maintenance/p1/complete", headers=headers, json={
+            "service_date": today, "run_hours": 20, "task_ids": [oil_id],
+            "checklist_confirmed": True, "service_type": "Oil service",
+        })
+        assert completed.status_code == 201, completed.text
+        after = (await ac.get("/reports/maintenance/p1", headers=headers)).json()
+        tasks = {task["component"]: task for task in after["tasks"]}
+        assert tasks["oil"]["next_due_run_hours"] == 270
+        assert tasks["fuel_filter"]["next_due_run_hours"] == 260
+        assert after["service_history"][0]["task_ids"] == [oil_id]
+
+    now = datetime.now(timezone.utc)
+    async with async_session_factory() as session:
+        session.add(MaintenanceFindingRecord(
+            id="finding-p1", site_id="site_1", panel_id="p1", metric="oil_pressure",
+            severity="warning", title="Oil pressure falling", detail="Sustained decline",
+            recommendation="Inspect lubrication", status="open", verification_kind="sensor",
+            evidence={"baseline": 4.0, "trigger": 3.0, "direction": "down", "threshold": 0.5},
+            first_detected_at=now, last_detected_at=now,
+        ))
+        await session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        work = await ac.post("/reports/maintenance/p1/findings/finding-p1/work", headers=headers,
+                             json={"resolution_note": "Inspected and replaced filter"})
+        assert work.status_code == 200, work.text
+        assert work.json()["status"] == "awaiting_verification"
+        assert (await ac.post("/reports/maintenance/p1/findings/finding-p1/verify", headers=headers,
+                              json={"resolution_note": "Checked", "inspection_confirmed": True})).status_code == 422
+        report = (await ac.get("/reports/maintenance/p1", headers=headers)).json()
+        assert report["monitored_condition"] == "insufficient_data"
+        assert report["findings"][0]["status"] == "awaiting_verification"
+
+
+@pytest.mark.asyncio
+async def test_due_service_event_is_idempotent_and_realerts_after_schedule_change(app, headers):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        created = await ac.post("/reports/maintenance/p1/tasks", headers=headers, json={
+            "component": "oil", "name": "Oil service", "interval_days": 30,
+            "baseline_date": (date.today() - timedelta(days=29)).isoformat(),
+        })
+        assert created.status_code == 201, created.text
+        task_id = created.json()["id"]
+    async with async_session_factory() as session:
+        await emit_due_events(session, "site_1")
+        await session.commit()
+        await emit_due_events(session, "site_1")
+        await session.commit()
+        events = (await session.execute(select(Event).where(
+            Event.command == "maintenance_due", Event.value == task_id))).scalars().all()
+        assert len(events) == 1
+        task = await session.get(MaintenanceTask, task_id)
+        task.name = "Oil and filter service"
+        await session.commit()
+        await emit_due_events(session, "site_1")
+        await session.commit()
+        events = (await session.execute(select(Event).where(
+            Event.command == "maintenance_due", Event.value == task_id))).scalars().all()
+        assert len(events) == 2
+
+
+@pytest.mark.asyncio
+async def test_fuel_reports_do_not_turn_missing_history_into_zero_consumption(app, headers):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        for path in ("/reports/fuel", "/reports/efficiency"):
+            response = await ac.get(path, headers=headers)
+            assert response.status_code == 200, response.text
+            assert response.json()["generators"][0]["fuel_litres"] is None
+            assert response.json()["fleet"]["kwh_per_litre"] is None
+            assert (await ac.get(path)).status_code == 401
+        assert (await ac.get("/reports/fuel?panel_id=other_panel", headers=headers)).status_code == 404
+        arabic = await ac.get("/reports/efficiency/export?locale=ar", headers=headers)
+        assert arabic.status_code == 200
+        assert "كفاءة المولد" in arabic.text
+
+
+@pytest.mark.asyncio
+async def test_fuel_api_and_csv_use_same_measured_values(app, headers):
+    now = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=7)
+    async with async_session_factory() as session:
+        for index in range(4):
+            timestamp = now + timedelta(minutes=2 * index)
+            values = {"fuel_used_litres": index * 5, "total_kwh": index * 15,
+                      "run_hours": index / 30, "load_kw": 225, "load_kw_percent": 45}
+            session.add(TelemetrySample(
+                site_id="site_1", panel_id="p1", recorded_at=timestamp, is_reachable=True,
+                engine_status="running", readings=values,
+                reading_quality={key: "good" for key in values},
+                reading_timestamps={key: timestamp.isoformat() for key in values},
+                source_identity="commissioned-meter-1",
+            ))
+        await session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        report = await ac.get("/reports/efficiency?period=7d&panel_id=p1", headers=headers)
+        assert report.status_code == 200, report.text
+        generator = report.json()["generators"][0]
+        assert generator["fuel_litres"] == 15
+        assert generator["energy_kwh"] == 45
+        assert generator["kwh_per_litre"] == 3
+        csv_response = await ac.get("/reports/efficiency/export?period=7d&panel_id=p1&locale=en", headers=headers)
+        assert csv_response.status_code == 200
+        assert "Test Generator 1,15.0,45.0,15.0" in csv_response.text
+
+
+@pytest.mark.asyncio
+async def test_custom_report_dates_filter_overview_maintenance_and_exports(app, headers):
+    today = datetime.now(timezone.utc).date()
+    inside = today - timedelta(days=4)
+    outside = today - timedelta(days=1)
+    async with async_session_factory() as session:
+        for identifier, day, hours, energy in (("old", inside, 4, 20), ("new", inside, 7, 40),
+                                                ("excluded", outside, 20, 100)):
+            session.add(TelemetrySample(id=identifier, site_id="site_1", panel_id="p1",
+                recorded_at=datetime.combine(day, datetime.min.time(), timezone.utc) + timedelta(hours=12),
+                is_reachable=True, engine_status="running", run_hours=hours, total_kwh=energy,
+                number_of_starts=hours))
+        session.add_all([
+            Event(id="inside_event", site_id="site_1", panel_id="p1", event_type="command_sent",
+                  triggered_by="manual", reason="Inside range", timestamp=datetime.combine(inside, datetime.min.time(), timezone.utc)),
+            Event(id="outside_event", site_id="site_1", panel_id="p1", event_type="command_sent",
+                  triggered_by="manual", reason="Outside range", timestamp=datetime.combine(outside, datetime.min.time(), timezone.utc)),
+            MaintenanceRecord(id="inside_service", site_id="site_1", panel_id="p1", service_date=inside,
+                              run_hours=7, service_type="Oil service"),
+            MaintenanceRecord(id="outside_service", site_id="site_1", panel_id="p1", service_date=outside,
+                              run_hours=20, service_type="Filter service"),
+        ])
+        await session.commit()
+    params = f"period=custom&start_date={inside.isoformat()}&end_date={inside.isoformat()}"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        overview = await ac.get(f"/reports/summary?{params}", headers=headers)
+        assert overview.status_code == 200, overview.text
+        assert overview.json()["generators"][0]["run_hours"] == 3
+        assert overview.json()["generators"][0]["total_kwh"] == 20
+        assert [row["id"] for row in overview.json()["recent_sessions"]] == ["inside_event"]
+        exported = await ac.get(f"/reports/export?{params}&locale=ar", headers=headers)
+        assert exported.status_code == 200, exported.text
+        assert "Inside range" in exported.text and "Outside range" not in exported.text
+        assert "Test Generator 1,TCP" in exported.text
+        maintenance = await ac.get(f"/reports/maintenance/p1?{params}", headers=headers)
+        assert maintenance.status_code == 200, maintenance.text
+        assert [row["id"] for row in maintenance.json()["service_history"]] == ["inside_service"]
+        history_csv = await ac.get(f"/reports/preventive-maintenance/p1/records/export?{params}", headers=headers)
+        assert "Oil service" in history_csv.text and "Filter service" not in history_csv.text
+        assert (await ac.get("/reports/summary?period=custom", headers=headers)).status_code == 422
 
 
 @pytest_asyncio.fixture(autouse=True)

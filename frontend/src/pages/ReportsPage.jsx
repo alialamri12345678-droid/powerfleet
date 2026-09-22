@@ -2,11 +2,19 @@ import React, { useEffect, useState } from 'react';
 import { Download, Activity, Zap, Clock, ShieldCheck, Wrench, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { apiRequest } from '../api/client';
 import { useLocale } from '../i18n/LocaleContext';
+import { PerformanceReport } from '../reports/PerformanceReport';
+import { MaintenanceReport } from '../reports/MaintenanceReport';
+import { useReportLocale } from '../reports/useReportLocale';
 
 export function ReportsPage() {
   const { t, locale, translateText, formatCode, formatNumber, formatDate, formatTime } = useLocale();
+  const { t: reportText } = useReportLocale();
+  const [activeReport, setActiveReport] = useState(() => sessionStorage.getItem('power-fleet-report-tab') || 'overview');
+  const [selectedPanel, setSelectedPanel] = useState('');
   const [report, setReport] = useState(null);
   const [period, setPeriod] = useState('30d');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState(null);
@@ -26,13 +34,25 @@ export function ReportsPage() {
 
   useEffect(() => {
     loadReport();
-  }, [period]);
+  }, [period, startDate, endDate]);
+
+  const reportParams = () => {
+    const query = new URLSearchParams({ period });
+    if (period === 'custom') {
+      if (!startDate || !endDate || startDate > endDate) return null;
+      query.set('start_date', startDate);
+      query.set('end_date', endDate);
+    }
+    return query.toString();
+  };
 
   async function loadReport() {
+    const params = reportParams();
+    if (!params) { setReport(null); setError(reportText('invalidDates')); setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const data = await apiRequest(`/reports/summary?period=${period}`);
+      const data = await apiRequest(`/reports/summary?${params}`);
       setReport(data);
     } catch (err) {
       setError(err.message);
@@ -42,10 +62,12 @@ export function ReportsPage() {
   }
 
   const handleExportCsv = async () => {
+    const params = reportParams();
+    if (!params) { setError(reportText('invalidDates')); return; }
     setExporting(true);
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`/api/reports/export?period=${period}&locale=${locale}`, {
+      const res = await fetch(`/api/reports/export?${params}&locale=${locale}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(t('exportFailed'));
@@ -218,7 +240,7 @@ export function ReportsPage() {
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+        {activeReport === 'overview' && <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Period Filter Buttons */}
           <div style={{
             display: 'flex',
@@ -230,6 +252,7 @@ export function ReportsPage() {
             {[
               { key: 'today', label: t('today') }, { key: '7d', label: t('sevenDays') },
               { key: '30d', label: t('thirtyDays') }, { key: 'all', label: t('allTime') },
+              { key: 'custom', label: reportText('customRange') },
             ].map((p) => (
               <button
                 key={p.key}
@@ -252,6 +275,15 @@ export function ReportsPage() {
             ))}
           </div>
 
+          {period === 'custom' && <>
+            <label className="form-group" style={{ margin: 0 }}>{reportText('fromDate')}
+              <input className="form-input" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+            </label>
+            <label className="form-group" style={{ margin: 0 }}>{reportText('toDate')}
+              <input className="form-input" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+          </>}
+
           <button
             type="button"
             className="btn btn-primary"
@@ -262,8 +294,22 @@ export function ReportsPage() {
             <Download size={15} />
             {exporting ? t('generating') : t('exportCsv')}
           </button>
-        </div>
+        </div>}
       </div>
+
+      <div role="tablist" aria-label={t('reports')} style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-subtle)' }}>
+        {[
+          ['overview', reportText('overview')], ['maintenance', t('preventiveMaintenance')],
+          ['fuel', reportText('fuelReport')], ['efficiency', reportText('efficiencyReport')],
+        ].map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={activeReport === key}
+          className={`nav-tab ${activeReport === key ? 'active' : ''}`} onClick={() => { setActiveReport(key); sessionStorage.setItem('power-fleet-report-tab', key); }} style={{ whiteSpace: 'nowrap' }}>{label}</button>)}
+      </div>
+
+      {activeReport === 'maintenance' && <MaintenanceReport generators={report?.generators || []} selectedPanel={selectedPanel} onSelectPanel={setSelectedPanel} />}
+      {activeReport === 'fuel' && <PerformanceReport kind="fuel" generators={report?.generators || []} />}
+      {activeReport === 'efficiency' && <PerformanceReport kind="efficiency" generators={report?.generators || []} />}
+
+      {activeReport === 'overview' && <>
 
       {error && (
         <div style={{
@@ -410,7 +456,7 @@ export function ReportsPage() {
                     {g.alarm_count}
                   </td>
                   <td>
-                    <button type="button" className="btn btn-secondary" onClick={() => loadMaintenance(g.panel_id)} disabled={maintenanceLoading === g.panel_id} style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                    <button type="button" className="btn btn-secondary" onClick={() => { setSelectedPanel(g.panel_id); setActiveReport('maintenance'); sessionStorage.setItem('power-fleet-report-tab', 'maintenance'); }} style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
                       {maintenanceLoading === g.panel_id ? t('analyzing') : t('viewReport')}
                     </button>
                   </td>
@@ -564,7 +610,7 @@ export function ReportsPage() {
           overflow: 'hidden',
         }}>
           <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border-subtle)', fontWeight: 600 }}>
-            {t('recentEvents', { period: period.toUpperCase() })}
+            {t('recentEvents', { period: period === 'custom' ? `${startDate} – ${endDate}` : period.toUpperCase() })}
           </div>
           <table className="data-table" style={{ border: 'none' }}>
             <thead>
@@ -608,6 +654,7 @@ export function ReportsPage() {
           </table>
         </div>
       )}
+      </>}
     </div>
   );
 }

@@ -8,6 +8,7 @@ from app.models.panel import Panel
 from app.models.power_setpoint import PowerSetpoint
 from app.models.schedule import Schedule
 from app.models.site import Site
+from app.models.site_supply import SiteSupply
 from app.models.threshold import Threshold
 from app.models.schedule_exception import ScheduleException
 from app.models.daily_priority import DailyPriority
@@ -18,6 +19,8 @@ from app.models.organization import Organization
 from app.models.command_record import CommandRecord
 from app.models.maintenance_record import MaintenanceRecord
 from app.models.gateway_lease import GatewayLease
+from app.models.maintenance_task import MaintenanceTask, MaintenanceFindingRecord
+from app.models.fuel_movement import FuelMovement
 
 __all__ = [
     "Base",
@@ -25,6 +28,7 @@ __all__ = [
     "TimestampMixin",
     "generate_uuid",
     "Site",
+    "SiteSupply",
     "Panel",
     "Schedule",
     "Threshold",
@@ -41,4 +45,7 @@ __all__ = [
     "CommandRecord",
     "MaintenanceRecord",
     "GatewayLease",
+    "MaintenanceTask",
+    "MaintenanceFindingRecord",
+    "FuelMovement",
 ]

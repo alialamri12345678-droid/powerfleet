@@ -4,6 +4,7 @@ from datetime import datetime, date
 from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 from app.controllers.profiles import CONTROLLER_PROFILES
+from app.api.analytics_config import GeneratorAnalyticsConfig
 
 
 # ── Site Schemas ────────────────────────────────────────────────────────
@@ -68,6 +69,12 @@ class PanelBase(BaseModel):
     controller_profile: str = "dse_86xx_mkii"
     maintenance_interval_hours: float = Field(250, ge=25, le=5000)
     maintenance_limits: dict[str, float] = Field(default_factory=dict)
+    analytics_config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("analytics_config")
+    @classmethod
+    def validate_analytics_config(cls, value):
+        return GeneratorAnalyticsConfig.model_validate(value).model_dump(exclude_none=True)
 
     @field_validator("controller_profile")
     @classmethod
@@ -92,6 +99,14 @@ class PanelUpdate(BaseModel):
     controller_profile: str | None = None
     maintenance_interval_hours: float | None = Field(None, ge=25, le=5000)
     maintenance_limits: dict[str, float] | None = None
+    analytics_config: dict[str, Any] | None = None
+
+    @field_validator("analytics_config")
+    @classmethod
+    def validate_analytics_config(cls, value):
+        if value is None:
+            raise ValueError("analytics_config must be an object")
+        return GeneratorAnalyticsConfig.model_validate(value).model_dump(exclude_none=True)
 
     @field_validator("controller_profile")
     @classmethod
@@ -432,6 +447,9 @@ class MaintenanceFinding(BaseModel):
     recommendation: str
     current_value: float | int
     unit: str
+    id: str | None = None
+    status: str = "open"
+    verification_kind: str = "sensor"
 
 
 class PreventiveMaintenanceReport(BaseModel):
@@ -440,7 +458,7 @@ class PreventiveMaintenanceReport(BaseModel):
     controller_profile: str
     period: str
     generated_at: datetime
-    condition_score: int
+    condition_score: int | None
     condition: str
     sample_count: int
     data_from: datetime | None
@@ -471,6 +489,37 @@ class MaintenanceRecordResponse(MaintenanceRecordCreate):
     site_id: str
     recorded_by: str | None
     created_at: datetime
+    task_ids: list[str] = Field(default_factory=list)
+    checklist_confirmed: bool = False
 
     class Config:
         from_attributes = True
+
+
+class MaintenanceTaskCreate(BaseModel):
+    component: Literal["oil", "oil_filter", "fuel_filter", "air_filter", "coolant", "battery", "belts", "hoses", "inspection", "custom"]
+    name: str = Field(..., min_length=1, max_length=200)
+    interval_hours: float | None = Field(None, gt=0, le=100000)
+    interval_days: int | None = Field(None, ge=1, le=36500)
+    baseline_date: date | None = None
+    baseline_run_hours: float | None = Field(None, ge=0)
+    manufacturer_reference: str | None = Field(None, max_length=2000)
+
+
+class MaintenanceTaskUpdate(BaseModel):
+    component: Literal["oil", "oil_filter", "fuel_filter", "air_filter", "coolant", "battery", "belts", "hoses", "inspection", "custom"] | None = None
+    name: str | None = Field(None, min_length=1, max_length=200)
+    interval_hours: float | None = Field(None, gt=0, le=100000)
+    interval_days: int | None = Field(None, ge=1, le=36500)
+    baseline_date: date | None = None
+    baseline_run_hours: float | None = Field(None, ge=0)
+    manufacturer_reference: str | None = Field(None, max_length=2000)
+
+
+class MaintenanceCompletionCreate(MaintenanceRecordCreate):
+    task_ids: list[str] = Field(..., min_length=1, max_length=100)
+    checklist_confirmed: bool = False
+
+
+class MaintenanceVerificationRequest(MaintenanceAlarmClearRequest):
+    checklist_confirmed: bool = False

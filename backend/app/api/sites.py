@@ -1,6 +1,7 @@
 """Sites API router — multi-site management and site context switching."""
 
 from typing import Annotated
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
@@ -12,9 +13,72 @@ from app.db.session import get_session
 from app.dependencies import get_current_user, get_gateway, get_rules_engine
 from app.models.panel import Panel
 from app.models.site import Site
+from app.models.site_supply import SiteSupply
+from app.models.event import Event
 from app.models.threshold import Threshold
+from app.api.dispatch_config import DispatchConfig, SitePowerReading
+from app.rules.adaptive_planner import settings as dispatch_settings
 
 router = APIRouter(prefix="/sites", tags=["Sites"])
+
+
+async def _owned_site(session, site_id, user):
+    site = await session.get(Site, site_id)
+    if not site or site.organization_id != user.organization_id:
+        raise HTTPException(404, "Site not found")
+    return site
+
+
+@router.get("/{site_id}/dispatch")
+async def get_dispatch(site_id: str, user: Annotated[User, Depends(get_current_user)],
+                       session: Annotated[AsyncSession, Depends(get_session)]):
+    site = await _owned_site(session, site_id, user)
+    supply = await session.get(SiteSupply, site_id)
+    config = dispatch_settings(site.dispatch_config)
+    age = ((datetime.now(timezone.utc) - (supply.measured_at.replace(tzinfo=timezone.utc)
+            if supply.measured_at.tzinfo is None else supply.measured_at)).total_seconds() if supply else None)
+    return {"config": config, "measurement": supply.reading if supply else None,
+            "measured_at": supply.measured_at if supply else None,
+            "measurement_fresh": bool(supply and 0 <= age <= config["measurement_max_age_seconds"]),
+            "plan": supply.plan if supply else None, "planned_at": supply.planned_at if supply else None}
+
+
+@router.patch("/{site_id}/dispatch")
+async def update_dispatch(site_id: str, body: DispatchConfig,
+                          user: Annotated[User, Depends(get_current_user)],
+                          session: Annotated[AsyncSession, Depends(get_session)]):
+    site = await _owned_site(session, site_id, user)
+    previous = dispatch_settings(site.dispatch_config)["mode"]
+    site.dispatch_config = body.model_dump()
+    session.add(Event(site_id=site_id, event_type="system", command="dispatch_config",
+                      value=body.mode, triggered_by="manual", user_id=user.id,
+                      reason="Site source and generator dispatch settings updated",
+                      previous_state=previous, new_state=body.mode, command_result="success"))
+    await session.commit()
+    return {"config": site.dispatch_config}
+
+
+@router.post("/{site_id}/dispatch/measurement")
+async def record_dispatch_measurement(site_id: str, body: SitePowerReading,
+                                      user: Annotated[User, Depends(get_current_user)],
+                                      session: Annotated[AsyncSession, Depends(get_session)]):
+    await _owned_site(session, site_id, user)
+    now = datetime.now(timezone.utc)
+    measured = body.measured_at.astimezone(timezone.utc)
+    if measured > now + timedelta(seconds=5) or measured < now - timedelta(minutes=5):
+        raise HTTPException(422, "Source measurement timestamp must be recent")
+    supply = await session.get(SiteSupply, site_id)
+    if supply and measured <= (supply.measured_at.replace(tzinfo=timezone.utc)
+                              if supply.measured_at.tzinfo is None else supply.measured_at):
+        raise HTTPException(409, "Source measurements must arrive in chronological order")
+    if supply is None:
+        supply = SiteSupply(site_id=site_id, measured_at=measured, reading=body.model_dump(mode="json"))
+        session.add(supply)
+    else:
+        supply.measured_at = measured
+        supply.reading = body.model_dump(mode="json")
+    await session.commit()
+    return {"status": "recorded", "measured_at": measured}
 
 
 @router.get("", response_model=list[SiteResponse])

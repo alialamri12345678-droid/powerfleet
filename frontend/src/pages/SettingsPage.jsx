@@ -4,11 +4,20 @@ import { AddSiteModal } from '../components/AddSiteModal';
 import { useAuth } from '../auth/AuthContext';
 import { useLocale } from '../i18n/LocaleContext';
 
+const dispatchLabels = {
+  en: { title: 'Generator dispatch method', legacy: 'Current threshold method', advisory: 'Adaptive planning (advisory)', automatic: 'Adaptive planning (automatic)', policy: 'Generator selection', priority: 'My priority order', capacity: 'Capacity and fewer changes', economy: 'Fuel economy when curves are available', grid: 'Utility grid is present', solar: 'Solar system is present', forming: 'Solar can form the island bus', curtail: 'Solar output can be curtailed', import: 'Grid import limit (kW; blank = unrestricted)', reserve: 'Additional reserve (kW)', max: 'Usable generator loading limit (%)', min: 'Minimum generator loading (%)', loss: 'Solar loss to cover (%)', dwell: 'Minimum run before release (seconds)', verified: 'Electrical topology and source measurements have been commissioned', save: 'Save dispatch method', status: 'Latest plan', noReading: 'No fresh facility meter reading', feed: 'Connect the external meter or simulator to the authenticated site measurement endpoint:', saved: 'Dispatch settings saved.', warning: 'Automatic operation waits for fresh facility measurements and confirmed generator breaker feedback.' },
+  ar: { title: 'طريقة تشغيل المولدات', legacy: 'طريقة حدود الحمل الحالية', advisory: 'تخطيط متقدم (استشاري)', automatic: 'تخطيط متقدم (آلي)', policy: 'اختيار المولدات', priority: 'ترتيب الأولوية الذي حددته', capacity: 'السعة وتقليل التبديل', economy: 'توفير الوقود عند توفر منحنيات الاستهلاك', grid: 'الشبكة العمومية موجودة', solar: 'النظام الشمسي موجود', forming: 'يمكن للطاقة الشمسية تغذية الشبكة المعزولة', curtail: 'يمكن خفض إنتاج الطاقة الشمسية', import: 'حد الاستيراد من الشبكة (كيلوواط؛ فارغ = بلا حد)', reserve: 'احتياطي إضافي (كيلوواط)', max: 'أقصى نسبة حمل مسموحة للمولد (%)', min: 'أدنى نسبة حمل للمولد (%)', loss: 'نسبة فقد الطاقة الشمسية المحتملة (%)', dwell: 'أقل مدة تشغيل قبل الفصل (ثانية)', verified: 'تم اعتماد ترتيب الربط الكهربائي وقياسات مصادر الطاقة', save: 'حفظ طريقة التشغيل', status: 'آخر خطة', noReading: 'لا توجد قراءة حديثة لعداد المنشأة', feed: 'اربط العداد الخارجي أو المحاكي بنقطة إدخال القياسات الموثقة:', saved: 'تم حفظ إعدادات التشغيل.', warning: 'التشغيل الآلي ينتظر قياسات حديثة للمنشأة وتأكيد حالة قواطع المولدات.' },
+};
+
 export function SettingsPage() {
   const { logout } = useAuth();
   const { t, locale } = useLocale();
   const displayDayIndexes = locale === 'ar' ? [5, 6, 0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5, 6];
   const [site, setSite] = useState(null);
+  const [dispatch, setDispatch] = useState(null);
+  const [dispatchState, setDispatchState] = useState(null);
+  const [savingDispatch, setSavingDispatch] = useState(false);
+  const dt = dispatchLabels[locale === 'ar' ? 'ar' : 'en'];
   const [threshold, setThreshold] = useState(null);
   const [startPct, setStartPct] = useState(70);
   const [stopPct, setStopPct] = useState(50);
@@ -42,6 +51,9 @@ export function SettingsPage() {
           apiRequest('/thresholds/start'),
         ]);
         setSite(siteData);
+        const dispatchData = await apiRequest(`/sites/${siteData.id}/dispatch`);
+        setDispatch(dispatchData.config);
+        setDispatchState(dispatchData);
         setThreshold(threshData);
         setPanels(panelsData);
         setDailyPriorities(prioData);
@@ -65,6 +77,20 @@ export function SettingsPage() {
     if (stopPct >= num) {
       setStopPct(Math.max(10, num - 10));
     }
+  };
+
+  const saveDispatch = async (event) => {
+    event.preventDefault();
+    setSavingDispatch(true); setMessage(null);
+    try {
+      const result = await apiRequest(`/sites/${site.id}/dispatch`, { method: 'PATCH', body: JSON.stringify({
+        ...dispatch,
+        grid_import_limit_kw: dispatch.grid_import_limit_kw === '' ? null : dispatch.grid_import_limit_kw,
+      }) });
+      setDispatch(result.config);
+      setMessage({ type: 'success', text: dt.saved });
+    } catch (error) { setMessage({ type: 'error', text: error.message }); }
+    finally { setSavingDispatch(false); }
   };
 
   const handleStopChange = (val) => {
@@ -337,6 +363,33 @@ export function SettingsPage() {
               </div>
             </div>
           </div>
+
+          {dispatch && <form onSubmit={saveDispatch} style={{ background: 'var(--card-bg)', border: '1px solid var(--border-subtle)', borderRadius: 4, padding: '2rem' }}>
+            <h2 style={{ fontSize: '1.125rem', marginBottom: '0.5rem' }}>{dt.title}</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{dt.warning}</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '0.9rem', marginTop: '1rem' }}>
+              <label className="form-group">{dt.title}<select className="form-select" value={dispatch.mode} onChange={e => setDispatch({ ...dispatch, mode: e.target.value })}>
+                <option value="legacy">{dt.legacy}</option><option value="advisory">{dt.advisory}</option><option value="automatic">{dt.automatic}</option>
+              </select></label>
+              <label className="form-group">{dt.policy}<select className="form-select" value={dispatch.policy} onChange={e => setDispatch({ ...dispatch, policy: e.target.value })}>
+                <option value="priority">{dt.priority}</option><option value="capacity">{dt.capacity}</option><option value="economy">{dt.economy}</option>
+              </select></label>
+              {[['reserve_kw', dt.reserve, 0, 1], ['max_load_percent', dt.max, 20, 100], ['min_load_percent', dt.min, 0, 70], ['transition_dwell_seconds', dt.dwell, 30, 3600]].map(([key, label, min, max]) =>
+                <label className="form-group" key={key}>{label}<input required type="number" className="form-input" min={min} max={max} step="any" value={dispatch[key]} onChange={e => setDispatch({ ...dispatch, [key]: Number(e.target.value) })} /></label>)}
+              <label className="form-group">{dt.import}<input type="number" className="form-input" min="0" step="any" value={dispatch.grid_import_limit_kw ?? ''} disabled={!dispatch.grid_present} onChange={e => setDispatch({ ...dispatch, grid_import_limit_kw: e.target.value === '' ? null : Number(e.target.value) })} /></label>
+              {dispatch.solar_present && <label className="form-group">{dt.loss}<input type="number" className="form-input" min="0" max="100" step="any" value={Math.round(dispatch.solar_loss_fraction * 100)} onChange={e => setDispatch({ ...dispatch, solar_loss_fraction: Number(e.target.value) / 100 })} /></label>}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', margin: '0.75rem 0' }}>
+              {[['grid_present', dt.grid], ['solar_present', dt.solar], ['solar_grid_forming', dt.forming], ['solar_curtailable', dt.curtail], ['topology_verified', dt.verified]].filter(([key]) => dispatch.solar_present || !['solar_grid_forming', 'solar_curtailable'].includes(key)).map(([key, label]) =>
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><input type="checkbox" checked={Boolean(dispatch[key])} onChange={e => setDispatch({ ...dispatch, [key]: e.target.checked, ...(key === 'solar_present' && !e.target.checked ? { solar_grid_forming: false, solar_curtailable: false } : {}), ...(key === 'grid_present' && !e.target.checked ? { grid_import_limit_kw: null } : {}) })} />{label}</label>)}
+            </div>
+            <button className="btn btn-primary" type="submit" disabled={savingDispatch}>{savingDispatch ? t('saving') : dt.save}</button>
+            <div style={{ marginTop: '1rem', color: 'var(--text-secondary)', fontSize: '0.83rem' }}>
+              <strong>{dt.status}:</strong> {dispatchState?.plan?.status || dt.noReading}
+              {dispatchState?.plan?.target_ids?.length > 0 && <> · {dispatchState.plan.target_ids.map(id => panels.find(panel => (panel.id || panel.panel_id) === id)?.name || id).join(', ')}</>}
+              <p style={{ marginTop: '0.5rem' }}>{dt.feed} <code>POST /api/sites/{site.id}/dispatch/measurement</code></p>
+            </div>
+          </form>}
 
           <form onSubmit={handleSave} style={{
             backgroundColor: 'var(--card-bg)',

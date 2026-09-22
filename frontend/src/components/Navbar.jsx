@@ -72,6 +72,13 @@ export function Navbar({
         </button>
         <button
           type="button"
+          className={`nav-tab ${activeTab === 'energy' ? 'active' : ''}`}
+          onClick={() => onSelectTab('energy')}
+        >
+          {t('energySources')}
+        </button>
+        <button
+          type="button"
           className={`nav-tab ${activeTab === 'schedule' ? 'active' : ''}`}
           onClick={() => onSelectTab('schedule')}
         >

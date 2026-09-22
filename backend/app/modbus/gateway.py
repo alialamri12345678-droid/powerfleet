@@ -510,7 +510,8 @@ class ModbusGateway:
             await self._command_status(**command_log, status="unknown", detail=str(exc))
             return False, msg
 
-    async def _validate_safe_to_stop(self, panel_id: str, triggered_by: str = "manual") -> tuple[bool, str]:
+    async def _validate_safe_to_stop(self, panel_id: str, triggered_by: str = "manual",
+                                     adaptive_safety: dict | None = None) -> tuple[bool, str]:
         """Check that stopping this panel won't violate capacity/reserve.
         
         Only an explicit customer override may bypass the capacity check.
@@ -521,6 +522,25 @@ class ModbusGateway:
         state = self._states.get(panel_id)
         if not state or not state.is_running:
             return True, "Panel not running, safe to send stop"
+
+        if triggered_by == "adaptive_dispatch":
+            context = adaptive_safety or {}
+            checked_at = context.get("checked_at")
+            if (not checked_at or (datetime.now(timezone.utc) - checked_at).total_seconds() > 5 or
+                    context.get("site_id") != state.site_id or not context.get("source_fresh")):
+                return False, "Adaptive stop requires a fresh verified site measurement"
+            target_ids = set(context.get("target_ids") or []) - {panel_id}
+            remaining_capacity = 0.0
+            for other_id in target_ids:
+                other = self._states.get(other_id)
+                if (not other or other.site_id != state.site_id or not other.is_running or
+                        not other.is_reachable or not other.is_data_fresh or
+                        not other.generator_breaker or other.reading_quality.get("generator_breaker") != "good"):
+                    return False, "Replacement generator is not confirmed connected"
+                remaining_capacity += float(self._panel_configs.get(other_id, {}).get("rated_kw", 0)) * float(context.get("max_load_percent", 80)) / 100
+            if remaining_capacity + 1e-6 < float(context.get("required_kw", 0)):
+                return False, "Confirmed remaining generator capacity is below required reserve"
+            return True, "Adaptive site capacity verified"
 
         config = self._panel_configs.get(panel_id, {})
         site_id = config.get("site_id")
@@ -552,6 +572,7 @@ class ModbusGateway:
         load_kw_at_decision: float | None = None,
         capacity_pct_at_decision: float | None = None,
         command_id: str | None = None,
+        adaptive_safety: dict | None = None,
     ) -> tuple[bool, str]:
         """Send Remote Stop to a panel, respecting cooldown and capacity guard."""
         command_id = command_id or str(uuid.uuid4())
@@ -559,7 +580,8 @@ class ModbusGateway:
                            triggered_by=triggered_by, reason=reason, user_id=user_id)
         await self._command_status(**command_log, status="requested")
         # 1. Capacity guard check
-        safe_to_stop, safe_msg = await self._validate_safe_to_stop(panel_id, triggered_by=triggered_by)
+        safe_to_stop, safe_msg = await self._validate_safe_to_stop(
+            panel_id, triggered_by=triggered_by, adaptive_safety=adaptive_safety)
         if not safe_to_stop:
             logger.warning("Stop blocked for %s: %s", panel_id, safe_msg)
             await self._command_status(**command_log, status="rejected", detail=safe_msg)

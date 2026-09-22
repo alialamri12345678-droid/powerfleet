@@ -1,6 +1,6 @@
 """Site model — one per customer installation."""
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, generate_uuid
@@ -24,6 +24,7 @@ class Site(Base, TimestampMixin):
         Integer, nullable=True, default=None,
         comment="Optional cap on how many generators can run simultaneously",
     )
+    dispatch_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
     # Relationships
     panels = relationship("Panel", back_populates="site", cascade="all, delete-orphan")

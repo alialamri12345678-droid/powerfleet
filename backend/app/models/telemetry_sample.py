@@ -36,3 +36,8 @@ class TelemetrySample(Base, TenantMixin):
     number_of_starts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     active_alarm_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     readings: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    fuel_used_litres: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reading_quality: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    reading_units: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    reading_timestamps: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    source_identity: Mapped[str | None] = mapped_column(String(255), nullable=True)

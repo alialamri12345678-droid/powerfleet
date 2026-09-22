@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from sqlalchemy import Date, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, Date, Float, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TenantMixin, TimestampMixin, generate_uuid
@@ -19,3 +19,5 @@ class MaintenanceRecord(Base, TenantMixin, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text)
     performed_by: Mapped[str | None] = mapped_column(String(200))
     recorded_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+    task_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    checklist_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

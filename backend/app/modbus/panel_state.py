@@ -58,6 +58,7 @@ class PanelState:
     run_hours: float = 0.0
     total_kwh: float = 0.0
     number_of_starts: int = 0
+    fuel_used_litres: float | None = None
 
     # Alarms — list of active alarm names
     active_alarms: list[str] = field(default_factory=list)
@@ -67,6 +68,7 @@ class PanelState:
     readings: dict[str, Any] = field(default_factory=dict)
     reading_units: dict[str, str] = field(default_factory=dict)
     reading_quality: dict[str, str] = field(default_factory=dict)
+    reading_timestamps: dict[str, str] = field(default_factory=dict)
 
     # Last command issued by this gateway
     last_command: str | None = None
@@ -162,10 +164,12 @@ class PanelState:
             "run_hours": self.run_hours,
             "total_kwh": self.total_kwh,
             "number_of_starts": self.number_of_starts,
+            "fuel_used_litres": self.fuel_used_litres,
             "active_alarms": self.active_alarms,
             "readings": self.readings,
             "reading_units": self.reading_units,
             "reading_quality": self.reading_quality,
+            "reading_timestamps": self.reading_timestamps,
             "last_command": self.last_command,
             "last_command_id": self.last_command_id,
             "last_command_time": (

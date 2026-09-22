@@ -1,4 +1,9 @@
 
 > scada-gateway-frontend@1.0.0 dev
-> vite --host 127.0.0.1 --port 3000
+> vite --host 127.0.0.1
 
+
+  VITE v6.4.3  ready in 628 ms
+
+  ➜  Local:   http://127.0.0.1:3000/
+  ➜  press h + enter to show help

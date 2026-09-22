@@ -32,6 +32,7 @@ function localizeError(message, status) {
 }
 
 export async function apiRequest(endpoint, options = {}) {
+  const { _responseType, ...fetchOptions } = options;
   const token = localStorage.getItem('access_token');
   const headers = {
     'Content-Type': 'application/json',
@@ -43,7 +44,7 @@ export async function apiRequest(endpoint, options = {}) {
   }
 
   const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
+    ...fetchOptions,
     headers,
   });
 
@@ -89,5 +90,6 @@ export async function apiRequest(endpoint, options = {}) {
 
   // Return json or null for 204 No Content
   if (response.status === 204) return null;
+  if (_responseType === 'blob') return response.blob();
   return response.json();
 }

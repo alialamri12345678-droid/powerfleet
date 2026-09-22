@@ -62,6 +62,7 @@ class Panel(Base, TenantMixin, TimestampMixin):
     )
     maintenance_interval_hours: Mapped[float] = mapped_column(Float, nullable=False, default=250.0)
     maintenance_limits: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    analytics_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
     # Relationships
     site = relationship("Site", back_populates="panels")

@@ -33,6 +33,7 @@ from app.modbus.gateway import ModbusGateway
 from app.rules.engine import RulesEngine
 from app.services.commands import enqueue_command
 from app.controllers import list_controller_profiles as available_controller_profiles
+from app.generator_profiles import list_generator_profiles as available_generator_profiles
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,14 @@ async def list_controller_profiles(
 ):
     """Describe supported controller capabilities for configuration-driven UI."""
     return available_controller_profiles()
+
+
+@router.get("/generator-profiles/available")
+async def list_generator_profiles(
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Return curated equipment profiles independently of controller models."""
+    return available_generator_profiles()
 
 
 @router.get("", response_model=list[PanelResponse])
@@ -110,6 +119,7 @@ async def create_panel(
         controller_profile=body.controller_profile,
         maintenance_interval_hours=body.maintenance_interval_hours,
         maintenance_limits=body.maintenance_limits,
+        analytics_config=body.analytics_config,
         rated_kw=body.rated_kw,
         rated_kvar=body.rated_kvar,
         priority=assigned_priority,
@@ -223,6 +233,7 @@ async def update_panel(
             transport_type=panel.transport_type,
             address=panel.address,
             unit_id=panel.unit_id,
+            controller_profile=panel.controller_profile,
             rated_kw=float(panel.rated_kw),
         )
 

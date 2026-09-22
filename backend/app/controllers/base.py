@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 from .profiles import ControllerProfile
@@ -31,6 +33,18 @@ class ControllerAdapter(ABC):
         return int(value) if register.data_type.startswith("uint") and register.scale == 1.0 else value
 
     def apply_reading(self, state, register, raw: int) -> None:
+        acquired_at = datetime.now(timezone.utc).isoformat()
+        state.reading_timestamps[register.name] = acquired_at
+        # GenComm all-ones means an unimplemented unsigned measurement; signed
+        # measurements reserve their most-negative value for an invalid sender.
+        sentinels = {"uint16": 0xFFFF, "uint32": 0xFFFFFFFF, "int16": -32768, "int32": -2147483648}
+        if not register.values and (raw == sentinels.get(register.data_type) or not isfinite(raw)):
+            state.readings[register.name] = None
+            state.reading_units[register.name] = register.unit
+            state.reading_quality[register.name] = "unavailable"
+            if register.name == "fuel_used_litres":
+                state.fuel_used_litres = None
+            return
         value = self.decode_reading(register, raw)
         state.readings[register.name] = value
         state.reading_units[register.name] = register.unit

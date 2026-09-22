@@ -15,6 +15,8 @@ from app.api.diagnostics import router as diagnostics_router
 from app.api.events import router as events_router
 from app.api.panels import router as panels_router
 from app.api.reports import router as reports_router
+from app.api.maintenance import router as maintenance_router
+from app.api.performance import router as performance_router
 from app.api.schedules import router as schedules_router
 from app.api.setpoints import router as setpoints_router
 from app.api.sites import router as sites_router
@@ -33,6 +35,7 @@ from app.models.command_record import CommandRecord
 from app.models.panel import Panel
 from app.models.schedule import Schedule
 from app.models.site import Site
+from app.models.site_supply import SiteSupply
 from app.models.threshold import Threshold
 from app.modbus.gateway import ModbusGateway
 from app.modbus.panel_state import PanelState
@@ -40,6 +43,7 @@ from app.rules.engine import RulesEngine
 from app.telemetry import TelemetryRecorder
 from app.services.commands import dispatch_queued_commands
 from app.services.gateway_lease import acquire_site_leases, renew_site_leases, release_site_leases
+from app.services.report_monitor import monitor_maintenance
 
 logging.basicConfig(
     level=logging.INFO,
@@ -383,6 +387,7 @@ async def rules_get_site(site_id: str):
                 "name": site.name,
                 "timezone": site.timezone,
                 "max_parallel_units": site.max_parallel_units,
+                "dispatch_config": site.dispatch_config or {},
             }
         return None
 
@@ -397,8 +402,24 @@ async def rules_get_panel(panel_id: str):
                 "rated_kw": panel.rated_kw,
                 "maintenance_mode": panel.maintenance_mode,
                 "lead_rotation_order": panel.lead_rotation_order,
+                "fuel_curve": (panel.analytics_config or {}).get("fuel_curve") or [],
             }
         return None
+
+
+async def rules_get_supply(site_id: str):
+    async with async_session_factory() as session:
+        supply = await session.get(SiteSupply, site_id)
+        return {"reading": supply.reading, "measured_at": supply.measured_at} if supply else None
+
+
+async def rules_save_plan(site_id: str, plan: dict):
+    async with async_session_factory() as session:
+        supply = await session.get(SiteSupply, site_id)
+        if supply:
+            supply.plan = plan
+            supply.planned_at = datetime.now(timezone.utc)
+            await session.commit()
 
 
 async def rules_reconstruct_threshold_state():
@@ -423,7 +444,7 @@ async def rules_reconstruct_threshold_state():
         threshold_started = {}
         for panel_id, evt in latest_commands.items():
             # If the last command was a start triggered by threshold or dispatcher
-            if evt.command == "remote_start" and evt.triggered_by in ("threshold", "dispatcher"):
+            if evt.command == "remote_start" and evt.triggered_by in ("threshold", "dispatcher", "adaptive_dispatch"):
                 threshold_started[panel_id] = evt.timestamp
                 
         return threshold_started
@@ -497,6 +518,8 @@ async def lifespan(app: FastAPI):
         get_panel=rules_get_panel,
         get_release_thresholds=rules_get_release_thresholds,
         get_start_thresholds=rules_get_start_thresholds,
+        get_supply=rules_get_supply,
+        save_plan=rules_save_plan,
     )
     rules_engine_instance._get_daily_priorities = rules_get_daily_priorities
 
@@ -512,6 +535,7 @@ async def lifespan(app: FastAPI):
     await rules_engine_instance.start()
     background_stop = asyncio.Event()
     command_task = asyncio.create_task(dispatch_queued_commands(gateway_instance, background_stop))
+    maintenance_task = asyncio.create_task(monitor_maintenance(gateway_instance, background_stop))
     lease_task = None
     if settings.runtime_mode == "gateway":
         lease_task = asyncio.create_task(maintain_gateway_leases(background_stop, len(owned_site_ids)))
@@ -524,6 +548,7 @@ async def lifespan(app: FastAPI):
         logger.info("Shutting down SCADA Gateway Backend...")
         background_stop.set()
         await command_task
+        await maintenance_task
         if lease_task:
             await lease_task
             await release_site_leases(settings.gateway_owner_id)
@@ -574,6 +599,8 @@ def create_app() -> FastAPI:
     app.include_router(events_router)
     app.include_router(diagnostics_router)
     app.include_router(reports_router)
+    app.include_router(maintenance_router)
+    app.include_router(performance_router)
     app.include_router(ws_router)
 
     @app.get("/health")

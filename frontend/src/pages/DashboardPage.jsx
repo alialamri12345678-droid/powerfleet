@@ -4,6 +4,7 @@ import { apiRequest } from '../api/client';
 import { GeneratorCard } from '../components/GeneratorCard';
 import { OverrideBanner } from '../components/OverrideBanner';
 import { useLocale } from '../i18n/LocaleContext';
+import { useReportLocale } from '../reports/useReportLocale';
 
 export function DashboardPage({
   panelStates = {},
@@ -15,11 +16,13 @@ export function DashboardPage({
   refreshKey,
 }) {
   const { t, formatNumber } = useLocale();
+  const { t: reportText } = useReportLocale();
   const [panels, setPanels] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [overrides, setOverrides] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionMessage, setActionMessage] = useState(null);
+  const [maintenanceDue, setMaintenanceDue] = useState(null);
 
   // ISO day of week: Monday is 0, Sunday is 6
   const weekdayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -43,6 +46,7 @@ export function DashboardPage({
       setPanels(panelsData);
       setSchedules(schedData);
       setOverrides(ovData);
+      apiRequest('/reports/maintenance/status/site').then(setMaintenanceDue).catch(() => setMaintenanceDue(null));
     } catch (err) {
       console.error('Error loading dashboard data:', err);
     } finally {
@@ -144,6 +148,13 @@ export function DashboardPage({
         gatewayStatus={gatewayStatus}
         onClearOverride={() => onNavigate('overrides')}
       />
+
+      {maintenanceDue && maintenanceDue.overdue + maintenanceDue.due_soon > 0 && <div className="system-banner override" style={{ gap: '1rem' }}>
+        <span>{reportText('maintenanceDueBanner', { overdue: formatNumber(maintenanceDue.overdue), soon: formatNumber(maintenanceDue.due_soon) })}</span>
+        <button className="btn btn-secondary" type="button" onClick={() => { sessionStorage.setItem('power-fleet-report-tab', 'maintenance'); onNavigate('reports'); }}>
+          {reportText('viewMaintenance')}
+        </button>
+      </div>}
 
       {actionMessage && (
         <div style={{

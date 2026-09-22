@@ -18,6 +18,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.modbus.gateway import ModbusGateway
 from app.modbus.panel_state import PanelState
 from app.rules.fleet_dispatcher import FleetDispatcher, DesiredState
+from app.rules.adaptive_planner import plan as plan_adaptive, settings as adaptive_settings
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,8 @@ class RulesEngine:
         self._get_daily_priorities = None
         self._get_release_thresholds = None
         self._get_start_thresholds = None
+        self._get_supply = None
+        self._save_plan = None
 
     def set_data_accessors(
         self,
@@ -73,6 +76,8 @@ class RulesEngine:
         get_panel=None,
         get_release_thresholds=None,
         get_start_thresholds=None,
+        get_supply=None,
+        save_plan=None,
     ):
         """Set the async functions used to read schedules/thresholds from DB."""
         self._get_schedules = get_schedules
@@ -84,6 +89,8 @@ class RulesEngine:
         self._get_panel = get_panel
         self._get_release_thresholds = get_release_thresholds
         self._get_start_thresholds = get_start_thresholds
+        self._get_supply = get_supply
+        self._save_plan = save_plan
 
     async def start(self) -> None:
         """Start the scheduler and register the threshold check listener."""
@@ -169,7 +176,14 @@ class RulesEngine:
             overrides=overrides_wants,
             fault_wants=self._fault_wants,
         )
-        
+        if self._get_site:
+            mode_by_site = {}
+            for state in self._gateway.states.values():
+                if state.site_id not in mode_by_site:
+                    site = await self._get_site(state.site_id)
+                    mode_by_site[state.site_id] = adaptive_settings((site or {}).get("dispatch_config"))["mode"]
+            desired_state = {pid: value for pid, value in desired_state.items()
+                             if mode_by_site.get(self._gateway.states[pid].site_id, "legacy") == "legacy"}
         await self._dispatcher.reconcile(desired_state)
 
     # ── Schedule Management ───────────────────────────────────────────
@@ -407,15 +421,131 @@ class RulesEngine:
         """Check site load against thresholds and start/stop backup panels."""
         if not self._get_thresholds:
             return
-
+        site_ids = {state.site_id for state in self._gateway.states.values() if state.site_id}
+        mode_by_site = {}
+        for site_id in site_ids:
+            site = await self._get_site(site_id) if self._get_site else None
+            mode = adaptive_settings((site or {}).get("dispatch_config"))["mode"]
+            mode_by_site[site_id] = mode
+            if mode != "legacy":
+                for pid, state in self._gateway.states.items():
+                    if state.site_id == site_id:
+                        self._threshold_wants.pop(pid, None)
+                        self._fault_wants.pop(pid, None)
+                await self._evaluate_adaptive_site(site_id, site)
         thresholds = await self._get_thresholds()
-        if not thresholds:
-            return
-
-        for threshold in thresholds:
-            await self._evaluate_single_threshold(threshold)
-            
+        for threshold in thresholds or []:
+            if mode_by_site.get(threshold["site_id"], "legacy") == "legacy":
+                await self._evaluate_single_threshold(threshold)
         await self._reconcile_fleet()
+
+    async def _evaluate_adaptive_site(self, site_id, site):
+        cfg = adaptive_settings((site or {}).get("dispatch_config"))
+        supply = await self._get_supply(site_id) if self._get_supply else None
+        measured_at = supply.get("measured_at") if supply else None
+        if measured_at and measured_at.tzinfo is None:
+            measured_at = measured_at.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - measured_at).total_seconds() if measured_at else None
+        if age is None or age < 0 or age > cfg["measurement_max_age_seconds"]:
+            result = {"status": "measurement_stale", "target_ids": [],
+                      "reasons": ["A fresh facility load and source reading is required"]}
+            if self._save_plan:
+                await self._save_plan(site_id, result)
+            return
+        measurement = supply["reading"]
+        if (cfg["grid_present"] and "grid_connected" not in measurement) or (cfg["solar_present"] and "solar_kw" not in measurement):
+            result = {"status": "measurement_incomplete", "target_ids": [],
+                      "reasons": ["Grid or solar status is missing"]}
+            if self._save_plan:
+                await self._save_plan(site_id, result)
+            return
+        current = {pid for pid, state in self._gateway.states.items()
+                   if state.site_id == site_id and state.is_running}
+        pinned = {pid for pid, state in self._gateway.states.items()
+                  if state.site_id == site_id and self._schedule_wants.get(pid) == "RUNNING"}
+        excluded = set()
+        for pid, state in self._gateway.states.items():
+            if state.site_id != site_id or not self._get_overrides:
+                continue
+            for override in await self._get_overrides(pid):
+                expires = override.get("expires_at")
+                if isinstance(expires, str):
+                    expires = datetime.fromisoformat(expires)
+                if expires and expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=timezone.utc)
+                if override.get("is_active") and expires and expires > datetime.now(timezone.utc):
+                    if override.get("override_type") == "force_start":
+                        pinned.add(pid)
+                    elif override.get("override_type") == "force_stop":
+                        excluded.add(pid)
+                    break
+        generators = []
+        priority_map = {}
+        if self._get_daily_priorities:
+            from zoneinfo import ZoneInfo
+            weekday = datetime.now(ZoneInfo((site or {}).get("timezone", "UTC"))).weekday()
+            priority_map = {row["panel_id"]: row["priority"] for row in await self._get_daily_priorities()
+                            if row.get("day_of_week") == weekday and row.get("priority") is not None}
+        for pid, state in self._gateway.states.items():
+            if state.site_id != site_id:
+                continue
+            info = await self._get_panel(pid) if self._get_panel else None
+            info = info or {}
+            generators.append({"id": pid, "rated_kw": float(info.get("rated_kw") or 0),
+                "priority": priority_map.get(pid, info.get("priority", 100)),
+                "fuel_curve": info.get("fuel_curve") or [],
+                "eligible": (state.is_reachable and state.is_data_fresh and not state.active_alarms and
+                             not info.get("maintenance_mode") and pid not in excluded)})
+        result = plan_adaptive(cfg, measurement, generators, current, pinned,
+                               (site or {}).get("max_parallel_units"))
+        max_parallel = (site or {}).get("max_parallel_units")
+        if (cfg["mode"] == "automatic" and result["status"] == "ready" and
+                result["start_ids"] and max_parallel and
+                len(current | set(result["target_ids"])) > max_parallel):
+            result["status"] = "transition_blocked_parallel_limit"
+            result["reasons"].append("Safe overlap would exceed the site parallel-generator limit")
+        if self._save_plan:
+            await self._save_plan(site_id, result)
+        if cfg["mode"] != "automatic" or not cfg["topology_verified"] or result["status"] != "ready":
+            return
+        target = set(result["target_ids"])
+        for pid in result["start_ids"]:
+            state = self._gateway.states[pid]
+            if state.last_command == "remote_start" and state.last_command_time and (
+                    datetime.now(timezone.utc) - state.last_command_time).total_seconds() < 60:
+                return
+            success, _ = await self._gateway.send_remote_start(
+                panel_id=pid, triggered_by="adaptive_dispatch",
+                reason=f"Adaptive plan: {result['required_kw']} kW including reserve")
+            if success:
+                self._threshold_started[pid] = datetime.now(timezone.utc)
+            return
+        if any(not self._gateway.states[pid].generator_breaker or
+               self._gateway.states[pid].reading_quality.get("generator_breaker") != "good"
+               for pid in target):
+            return
+        if any(state.site_id == site_id and state.is_running and state.last_command == "remote_stop" and
+               state.last_command_time and (datetime.now(timezone.utc) - state.last_command_time).total_seconds() < 60
+               for state in self._gateway.states.values()):
+            return
+        for pid in result["release_ids"]:
+            if pid not in self._threshold_started or pid in pinned or pid in excluded:
+                continue
+            started_at = self._threshold_started[pid]
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - started_at).total_seconds() < cfg["transition_dwell_seconds"]:
+                continue
+            context = {"checked_at": datetime.now(timezone.utc), "site_id": site_id,
+                       "source_fresh": True, "target_ids": result["target_ids"],
+                       "required_kw": result["required_kw"],
+                       "max_load_percent": cfg["max_load_percent"]}
+            success, _ = await self._gateway.send_remote_stop(
+                panel_id=pid, triggered_by="adaptive_dispatch", adaptive_safety=context,
+                reason=f"Adaptive plan: confirmed remaining capacity {result['usable_capacity_kw']} kW")
+            if success:
+                self._threshold_started.pop(pid, None)
+            return
 
     async def _evaluate_faults(self) -> None:
         """Monitor for failed starts or overloads and start replacement/relief units."""
@@ -428,6 +558,10 @@ class RulesEngine:
             site_id = state.site_id
             if not site_id:
                 continue
+            if self._get_site:
+                site = await self._get_site(site_id)
+                if adaptive_settings((site or {}).get("dispatch_config"))["mode"] != "legacy":
+                    continue
                 
             if site_id not in sites_data:
                 sites_data[site_id] = {

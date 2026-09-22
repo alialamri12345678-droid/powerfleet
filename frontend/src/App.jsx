@@ -9,6 +9,7 @@ import { ReportsPage } from './pages/ReportsPage';
 import { DiagnosticsPage } from './pages/DiagnosticsPage';
 import { OverridesPage } from './pages/OverridesPage';
 import { EventLogPage } from './pages/EventLogPage';
+import { EnergySourcesPage } from './pages/EnergySourcesPage';
 import { AddSiteModal } from './components/AddSiteModal';
 import { AddGeneratorModal } from './components/AddGeneratorModal';
 import { useWebSocketTelemetry } from './api/ws';
@@ -120,6 +121,7 @@ function AppContent() {
         {activeTab === 'schedule' && <SchedulePage />}
         {activeTab === 'settings' && <SettingsPage />}
         {activeTab === 'reports' && <ReportsPage />}
+        {activeTab === 'energy' && <EnergySourcesPage currentSite={currentSite} panelStates={panelStates} />}
 
         {/* Diagnostics, overrides, and audit log tabs */}
         {activeTab === 'diagnostics' && <DiagnosticsPage />}

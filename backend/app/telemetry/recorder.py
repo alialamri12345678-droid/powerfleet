@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -12,6 +14,7 @@ from app.db.session import async_session_factory
 from app.models.panel import Panel
 from app.models.telemetry_sample import TelemetrySample
 from app.modbus.panel_state import PanelState
+from app.services.measurement_quality import metric_value
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,11 @@ class TelemetryRecorder:
                     panel = await session.get(Panel, panel_id)
                     if panel is None:
                         return
+                    fuel_config = panel.analytics_config or {}
+                    identity_input = [panel.controller_profile, panel.transport_type, panel.address,
+                                      panel.unit_id, {key: fuel_config.get(key) for key in
+                                                      ("fuel_source", "tank_curve", "fuel_lhv_kwh_per_litre")}]
+                    source_identity = hashlib.sha256(json.dumps(identity_input, sort_keys=True).encode()).hexdigest()
                     session.add(TelemetrySample(
                         site_id=panel.site_id,
                         panel_id=panel_id,
@@ -59,6 +67,11 @@ class TelemetryRecorder:
                         number_of_starts=state.number_of_starts,
                         active_alarm_count=len(state.active_alarms),
                         readings=state.readings,
+                        fuel_used_litres=metric_value(state, "fuel_used_litres"),
+                        reading_quality=dict(state.reading_quality),
+                        reading_units=dict(state.reading_units),
+                        reading_timestamps=dict(state.reading_timestamps),
+                        source_identity=source_identity,
                     ))
                     await session.commit()
                 self._last_recorded[panel_id] = now

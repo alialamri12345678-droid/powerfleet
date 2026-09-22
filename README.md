@@ -6,6 +6,14 @@ The panels perform synchronization, breaker sequencing, load sharing, and electr
 
 At gateway startup, a running unit with no active schedule is adopted by load management. It remains on for the configured dwell period and is then eligible for release when facility load is below its release threshold. Use an expiring override when a manually started unit must remain running independently of load rules.
 
+## Optional adaptive dispatch
+
+Site Settings offers three dispatch choices. **Current threshold method** preserves the existing per-generator start/release thresholds and remains the default after upgrade. **Adaptive planning (advisory)** calculates and displays a proposed generator combination without issuing commands. **Adaptive planning (automatic)** follows the same plan after the customer confirms that the site's electrical topology and measurements have been commissioned.
+
+The adaptive planner evaluates generator rated sizes, usable loading limits, customer priority order, maximum parallel units, utility import capacity, measured solar production, a configured solar-loss case, reserve kW, maintenance exclusions, schedules, and active overrides. Capacity, priority, and economy selection policies are available. Economy uses configured manufacturer fuel curves when every candidate has enough curve data. The planner starts one required unit at a time and will not release an existing generator until every target generator has fresh controller data and confirmed breaker feedback. Synchronization, load sharing, breaker sequencing, and electrical protection remain with the configured controllers.
+
+Grid and solar operation requires a commissioned site power meter or external energy controller to submit fresh readings to `POST /api/sites/{site_id}/dispatch/measurement` using an authenticated customer session. A reading contains `measured_at`, facility `load_kw`, `solar_kw`, `grid_connected`, and `bus_energized`. Missing or stale readings suspend adaptive actions. Automatic grid dispatch also requires a verified import capacity. Keep a site in advisory mode until the proposed combinations have been validated against the external simulator and the real electrical arrangement.
+
 The supplied map now uses the zero-based register addresses and scaling in GenComm 2.236 MF (26 May 2022). Remote start/stop uses the required atomic system-control key and one's-complement pair. Model-specific optional points and the actual controller firmware/configuration must still be verified during commissioning. See [the architecture review](docs/architecture-review.md).
 
 ## Customer access
@@ -23,7 +31,15 @@ Customer organizations now isolate sites in a shared database. Every account has
 
 ## Preventive maintenance
 
-The gateway stores rate-limited telemetry history for each generator and uses it to produce an explainable preventive-maintenance report. The report covers available engine health, fuel, electrical, loading, alarm and lifetime-counter data, gives condition findings and recommended follow-up actions, and exports separately for each generator. It supports maintenance planning; commissioned sensor scaling, physical inspection and the manufacturer's maintenance schedule remain authoritative.
+The Reports page has separate Preventive, Fuel consumption, and Efficiency tabs. For each generator, configure component service tasks from the manufacturer's schedule (running hours and/or calendar days, whichever comes first) with verified baselines. Engineers select only the tasks actually completed, confirm the checklist and record the service date, hour reading, and notes. Due and overdue tasks appear on the dashboard and are recorded in the audit events. Each task advances independently.
+
+Every report tab supports arbitrary inclusive From/To dates in the site's timezone; the same window is used for on-screen history and CSV exports. In Preventive, date selection filters readings, finding history, and completed services; service deadlines and open findings remain current so a historical date cannot conceal a task due today.
+
+Preventive findings use persistent trends at comparable operating loads and verified measurements, not an isolated low/high sample. The report separately shows service compliance, observed condition, and measurement coverage. Missing, stale, or uncommissioned data is **unknown**, not healthy. Recording work moves a finding to awaiting verification; it clears only after subsequent qualifying measurements (or a new alarm-free inspection for controller alarms). A satisfactory report supports planning but does not certify physical condition or replace manufacturer guidance. The report and completed-service history export in English or Arabic CSV.
+
+Fuel and efficiency reports use matched, quality-checked measurement intervals and explicitly exclude collection gaps, counter resets, and changed measurement sources. Configure the generator's engine model, nominal battery/frequency and fuel measurement source in its generator settings. A cumulative fuel-used register is preferred. A flow meter gives an estimated volume; tank-level consumption requires a calibrated level-to-litres curve and recorded refills/transfers. Energy comes from a cumulative kWh register when available, or is estimated from sampled kW. Conversion efficiency in percent requires a commissioned fuel lower heating value; otherwise kWh/L and L/kWh remain available if the matching fuel and energy measurements are sufficient. The daily, per-generator and fleet totals and bilingual CSV share the same calculations. Historical readings without explicit quality and acquisition timestamps remain unknown; they are not retroactively treated as valid measurements.
+
+Commission the actual controller's optional registers, scaling and update cadence before trusting these reports. Neither generator efficiency nor failure prediction can be inferred from an uninstrumented panel. For long deployments, plan retention/rollups for raw telemetry and validate report latency with the intended fleet size.
 
 ## Local setup with an external simulator
 
@@ -71,6 +87,8 @@ Back up the database before upgrading, then run `python -m alembic upgrade head`
 - Removes configuration rows pointing to deleted generators.
 - Keeps the site-wide threshold defaults and historical events.
 - Detaches deleted-generator references from audit events.
+
+The later preventive/performance migration adds equipment analytics settings, reading-quality metadata, component tasks, persistent findings, and fuel-movement records without rewriting historical telemetry. Back up and verify each installation before migrating; commissioning metadata is populated only by new polls.
 
 Generator deletion now removes start/release thresholds, per-generator thresholds, daily priorities, schedules, schedule exceptions, setpoints and overrides. Remaining generator and threshold priorities are compacted, while each day's relative priority order is preserved. SQLite foreign-key enforcement is enabled, matching PostgreSQL's configured cascades. Site deletion preserves customer accounts by moving their active context to a remaining site.
 

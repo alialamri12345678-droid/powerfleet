@@ -53,6 +53,11 @@ export function GeneratorCard({
           <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
             {t('capacity', { value: formatNumber(panel.rated_kw) })}
           </div>
+          {panel.analytics_config?.generator_profile_id && panel.analytics_config.generator_profile_id !== 'custom' && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: 2 }}>
+              {panel.analytics_config.generator_manufacturer} {panel.analytics_config.generator_model}
+            </div>
+          )}
         </div>
         {isOnDutyToday && (
           <span className="duty-indicator-text">{t('onDutyToday')}</span>
